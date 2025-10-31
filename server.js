@@ -302,7 +302,7 @@ app.post('/update', async (req, res) => {
         const mucNuocA = parseFloat(body.mucNuocA);
         const mucNuocB = parseFloat(body.mucNuocB);
         const luuLuong = parseFloat(body.luuLuong);
-        const isRaining = body.isRaining === true;
+       const isRaining = body.isRaining === true;
         const trangThaiSimulator = body.trangThai || '';
         const thongBaoSimulator = body.thongBao || '';
         const time_until_a_danger_simulator = body.time_until_a_danger; // Sẽ là null hoặc số giây
@@ -341,7 +341,7 @@ app.post('/update', async (req, res) => {
             mucNuocA, mucNuocB, luuLuong, 
             is_raining_now, b_rate_of_change, 
             flow_rate_of_change, ab_diff 
-      };
+       };
 
         try {
             const [statusRes, timeRes] = await Promise.all([
