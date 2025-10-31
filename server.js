@@ -517,6 +517,6 @@ app.listen(SERVER_PORT, () => {
     // Railway sẽ dùng PORT động, nhưng log này vẫn hữu ích
     console.log(`🚀 Server Node.js đang chạy tại cổng: ${SERVER_PORT}`);
     console.log(`🧠 Đang kết nối tới API dự đoán tại: ${PYTHON_SERVER_URL}`);
-    console.log(`📱 Hệ thống sẵn sàng nhận FCM token từ điện thoại!`);
+    console.log(`📱 Hệ thống sẵn sàng nhận FCM token từ điện thoại!!`);
     console.log(`🔔 Hệ thống sẽ gửi cảnh báo KHI AI THAY ĐỔI TRẠNG THÁI`);
 });
