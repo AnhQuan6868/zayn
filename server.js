@@ -1,3 +1,19 @@
+// === DEBUG CODE ===
+// Mã này sẽ chạy đầu tiên để kiểm tra xem Railway đã "nhìn thấy" biến chưa
+console.log("--- BẮT ĐẦU DEBUG BIẾN MÔI TRƯỜNG ---");
+if (process.env.SERVICE_ACCOUNT_JSON) {
+  console.log("✅ [DEBUG] ĐÃ TÌM THẤY BIẾN SERVICE_ACCOUNT_JSON.");
+} else {
+  console.log("❌ [DEBUG] KHÔNG TÌM THẤY BIẾN SERVICE_ACCOUNT_JSON.");
+}
+if (process.env.DATABASE_URL) {
+  console.log("✅ [DEBUG] ĐÃ TÌM THẤY BIẾN DATABASE_URL.");
+} else {
+  console.log("❌ [DEBUG] KHÔNG TÌM THẤY BIẾN DATABASE_URL.");
+}
+console.log("--- KẾT THÚC DEBUG ---");
+// ==================
+
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
@@ -8,30 +24,71 @@ const admin = require('firebase-admin');
 // =============================
 // CẤU HÌNH HỆ THỐNG
 // =============================
+// Railway sẽ tự động cung cấp biến PORT
 const SERVER_PORT = process.env.PORT || 3000;
 const PYTHON_SERVER_URL = process.env.PYTHON_SERVER_URL || "http://localhost:5001";
-const DB_CONFIG = {
-    user: process.env.DB_USER || 'postgres',
-    host: process.env.DB_HOST || 'localhost',
-    database: process.env.DB_NAME || 'flood_alert_db',
-    password: process.env.DB_PASS || 'Quan@',
-    port: process.env.DB_PORT || 5432,
-};
 const RAPID_RISE_THRESHOLD = 0.5; // cm/giây
 
 // =============================
-// KHỞI TẠO FIREBASE ADMIN
+// KHỞI TẠO CSDL (DATABASE) - TỰ ĐỘNG CHO CLOUD/LOCAL
+// =============================
+let pool;
+try {
+    if (process.env.DATABASE_URL) {
+        // Môi trường Cloud (Railway)
+        console.log("✅ [DB Config] Đang kết nối CSDL Cloud (sử dụng DATABASE_URL)...");
+        pool = new Pool({
+            connectionString: process.env.DATABASE_URL,
+            // Cấu hình SSL (thường cần thiết cho các CSDL cloud)
+            ssl: {
+                rejectUnauthorized: false
+            }
+        });
+    } else {
+        // Môi trường Local (Máy tính của bạn)
+        console.log("⚠️ [DB Config] Đang kết nối CSDL Local (sử dụng DB_CONFIG)...");
+        const DB_CONFIG = {
+            user: process.env.DB_USER || 'postgres',
+            host: process.env.DB_HOST || 'localhost',
+            database: process.env.DB_NAME || 'flood_alert_db',
+            password: process.env.DB_PASS || 'Quan@',
+            port: process.env.DB_PORT || 5432,
+        };
+        pool = new Pool(DB_CONFIG);
+    }
+} catch (dbErr) {
+    console.error("❌ LỖI NGHIÊM TRỌNG KHI KHỞI TẠO CSDL POOL:", dbErr.message);
+}
+
+
+// =============================
+// KHỞI TẠO FIREBASE ADMIN - TỰ ĐỘNG CHO CLOUD/LOCAL
 // =============================
 try {
-    // Đảm bảo file 'serviceAccountKey.json' nằm cùng thư mục
-    const serviceAccount = require('./serviceAccountKey.json');
-    admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-    });
-    console.log("✅ Firebase Admin SDK đã được khởi tạo.");
+    if (process.env.SERVICE_ACCOUNT_JSON) {
+        // Môi trường Cloud (Railway) - Đọc từ biến môi trường
+        console.log("✅ [Firebase] Đang khởi tạo từ BIẾN MÔI TRƯỜNG (Cloud)...");
+        // Parse chuỗi JSON từ biến môi trường
+        const serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        console.log("✅ Firebase Admin SDK đã khởi tạo từ BIẾN MÔI TRƯỜNG (Cloud).");
+
+    } else {
+        // Môi trường Local (Máy tính) - Đọc từ file
+        console.log("⚠️ [Firebase] Đang khởi tạo từ file './serviceAccountKey.json' (Local)...");
+        const serviceAccount = require('./serviceAccountKey.json');
+        admin.initializeApp({
+            credential: admin.credential.cert(serviceAccount)
+        });
+        console.log("✅ Firebase Admin SDK đã khởi tạo từ FILE (Local).");
+    }
 } catch (error) {
-    console.error("❌ Lỗi khởi tạo Firebase Admin SDK:", error.message);
-    console.warn("⚠️ Hãy chắc chắn file 'serviceAccountKey.json' tồn tại.");
+    console.error("❌ LỖI NGHIÊM TRỌNG KHI KHỞI TẠO FIREBASE ADMIN:", error.message);
+    if (!process.env.SERVICE_ACCOUNT_JSON) {
+       console.warn("⚠️ Hãy chắc chắn file 'serviceAccountKey.json' (Local) hoặc biến 'SERVICE_ACCOUNT_JSON' (Cloud) tồn tại.");
+    }
 }
 
 // =============================
@@ -56,7 +113,7 @@ const appState = {
 const app = express();
 app.use(express.json());
 app.use(cors());
-const pool = new Pool(DB_CONFIG);
+// 'pool' đã được khởi tạo ở trên
 
 // =============================
 // HÀM HỖ TRỢ (Helpers)
@@ -144,6 +201,10 @@ function getNotificationBody(status, countdown) {
 
 /** Hàm gửi thông báo nội bộ qua FCM */
 async function sendPushNotificationInternal(title, body) {
+    if (!admin.apps.length) { 
+        console.error("❌ Firebase Admin chưa khởi tạo, không thể gửi thông báo."); 
+        return; 
+    }
     if (!appState.fcmToken) { // Kiểm tra lại
         console.warn("sendPushNotificationInternal: Bỏ qua vì fcmToken là null.");
         return false;
@@ -348,12 +409,18 @@ app.post('/update', async (req, res) => {
             duDoanTrangThai, time_until_a_danger_simulator, 
             duDoanThoiGian, isRaining
         ];
-        await pool.query(sql, values);
+        
+        // Chỉ thực thi query nếu 'pool' đã được khởi tạo
+        if (pool) {
+            await pool.query(sql, values);
+            console.log(`[✓] DB Save: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}, Mưa:${isRaining ? 'CÓ':'KO'}, Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
+        } else {
+            console.error("❌ Bỏ qua DB Save: CSDL pool chưa được khởi tạo.");
+        }
+
 
         // 8. Cập nhật trạng thái (sau khi mọi thứ thành công)
         appState.lastSensorData = currentSensorData; // Sửa: Dùng appState
-
-        console.log(`[✓] DB Save: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}, Mưa:${isRaining ? 'CÓ':'KO'}, Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
 
         // 9. Phản hồi
         res.status(200).json({
@@ -387,6 +454,10 @@ app.post('/update', async (req, res) => {
 
 /** API: Lấy dữ liệu mới nhất (cho MainActivity) */
 app.get('/data', async (req, res) => {
+    if (!pool) {
+        console.error("❌ Lỗi /data: CSDL pool chưa được khởi tạo.");
+        return res.status(500).json({ error: 'Lỗi server: CSDL chưa sẵn sàng' });
+    }
     try {
         const sql = 'SELECT * FROM sensor_data ORDER BY id DESC LIMIT 1';
         const result = await pool.query(sql);
@@ -402,6 +473,10 @@ app.get('/data', async (req, res) => {
 
 /** API: Lấy dữ liệu cho biểu đồ (ChartActivity) */
 app.get('/api/chart_data', async (req, res) => {
+    if (!pool) {
+        console.error("❌ Lỗi /api/chart_data: CSDL pool chưa được khởi tạo.");
+        return res.status(500).json({ error: 'Lỗi server: CSDL chưa sẵn sàng' });
+    }
     try {
         const sql = `
             WITH Last300 AS ( SELECT * FROM sensor_data ORDER BY id DESC LIMIT 300 )
@@ -417,6 +492,10 @@ app.get('/api/chart_data', async (req, res) => {
 
 /** API: Lấy dữ liệu lịch sử theo ngày (HistoryActivity) */
 app.get('/api/history_by_date', async (req, res) => {
+    if (!pool) {
+        console.error("❌ Lỗi /api/history_by_date: CSDL pool chưa được khởi tạo.");
+        return res.status(500).json({ error: 'Lỗi server: CSDL chưa sẵn sàng' });
+    }
     try {
         const { date } = req.query;
         if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -435,7 +514,8 @@ app.get('/api/history_by_date', async (req, res) => {
 // KHỞI ĐỘNG SERVER
 // =============================
 app.listen(SERVER_PORT, () => {
-    console.log(`🚀 Server Node.js đang chạy tại: http://localhost:${SERVER_PORT}`);
+    // Railway sẽ dùng PORT động, nhưng log này vẫn hữu ích
+    console.log(`🚀 Server Node.js đang chạy tại cổng: ${SERVER_PORT}`);
     console.log(`🧠 Đang kết nối tới API dự đoán tại: ${PYTHON_SERVER_URL}`);
     console.log(`📱 Hệ thống sẵn sàng nhận FCM token từ điện thoại!`);
     console.log(`🔔 Hệ thống sẽ gửi cảnh báo KHI AI THAY ĐỔI TRẠNG THÁI`);
