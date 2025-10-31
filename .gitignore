@@ -1,6 +1,15 @@
-# Dependencies
+# Chặn thư viện (rất nặng)
 node_modules/
 
-# Secret files
+# Chặn file bí mật (CỰC KỲ QUAN TRỌNG)
 .env
 serviceAccountKey.json
+
+# === CHẶN FILE PYTHON & AI ===
+*.py
+*.pkl
+fake_sensor.js
+
+# === CHẶN DATA LOGS (nếu có) ===
+data_logs/
+*.csv
