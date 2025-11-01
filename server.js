@@ -509,39 +509,7 @@ app.get('/api/history_by_date', async (req, res) => {
         res.status(500).json({ error: 'Lỗi server khi lấy lịch sử' });
     }
 });
-// =============================
-// KIỂM TRA & TẠO BẢNG CSDL (Nếu chưa tồn tại)
-// =============================
-async function setupDatabase() {
-    // Không cần chạy nếu kết nối CSDL bị lỗi
-    if (!pool) return;
 
-    const createTableQuery = `
-        CREATE TABLE IF NOT EXISTS sensor_data (
-            id SERIAL PRIMARY KEY,
-            mucNuocA NUMERIC(10, 2) NOT NULL,
-            mucNuocB NUMERIC(10, 2) NOT NULL,
-            luuLuong NUMERIC(10, 2) NOT NULL,
-            is_raining BOOLEAN DEFAULT FALSE,
-            trangThai VARCHAR(50), 
-            thongBao TEXT,
-            predicted_trangthai VARCHAR(50), 
-            predicted_time_to_a NUMERIC(10, 2),
-            time_until_a_danger NUMERIC(10, 2),
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        );
-    `;
-    try {
-        // Lệnh này chỉ tạo bảng nếu nó CHƯA tồn tại
-        await pool.query(createTableQuery); 
-        console.log("✅ [DB Setup] Bảng 'sensor_data' đã được tạo hoặc đã tồn tại.");
-    } catch (err) {
-        console.error("❌ [DB Setup] Lỗi khi tạo bảng 'sensor_data':", err.message);
-    }
-}
-
-// Gọi hàm này ngay khi server khởi động
-setupDatabase();
 
 // =============================
 // KHỞI ĐỘNG SERVER
