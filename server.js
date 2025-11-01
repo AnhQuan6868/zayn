@@ -24,7 +24,6 @@ const admin = require('firebase-admin');
 // =============================
 // CẤU HÌNH HỆ THỐNG
 // =============================
-// Railway sẽ tự động cung cấp biến PORT
 const SERVER_PORT = process.env.PORT || 3000;
 const PYTHON_SERVER_URL = process.env.PYTHON_SERVER_URL || "http://localhost:5001";
 const RAPID_RISE_THRESHOLD = 0.5; // cm/giây
@@ -39,7 +38,6 @@ try {
         console.log("✅ [DB Config] Đang kết nối CSDL Cloud (sử dụng DATABASE_URL)...");
         pool = new Pool({
             connectionString: process.env.DATABASE_URL,
-            // Cấu hình SSL (thường cần thiết cho các CSDL cloud)
             ssl: {
                 rejectUnauthorized: false
             }
@@ -66,9 +64,8 @@ try {
 // =============================
 try {
     if (process.env.SERVICE_ACCOUNT_JSON) {
-        // Môi trường Cloud (Railway) - Đọc từ biến môi trường
+        // Môi trường Cloud (Railway)
         console.log("✅ [Firebase] Đang khởi tạo từ BIẾN MÔI TRƯỜNG (Cloud)...");
-        // Parse chuỗi JSON từ biến môi trường
         const serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
         admin.initializeApp({
             credential: admin.credential.cert(serviceAccount)
@@ -76,7 +73,7 @@ try {
         console.log("✅ Firebase Admin SDK đã khởi tạo từ BIẾN MÔI TRƯỜNG (Cloud).");
 
     } else {
-        // Môi trường Local (Máy tính) - Đọc từ file
+        // Môi trường Local (Máy tính)
         console.log("⚠️ [Firebase] Đang khởi tạo từ file './serviceAccountKey.json' (Local)...");
         const serviceAccount = require('./serviceAccountKey.json');
         admin.initializeApp({
@@ -94,7 +91,6 @@ try {
 // =============================
 // TRẠNG THÁI MÁY CHỦ (State)
 // =============================
-// Nhóm các biến trạng thái vào một đối tượng để dễ quản lý
 const appState = {
     fcmToken: null,
     lastSensorData: {
@@ -113,7 +109,6 @@ const appState = {
 const app = express();
 app.use(express.json());
 app.use(cors());
-// 'pool' đã được khởi tạo ở trên
 
 // =============================
 // HÀM HỖ TRỢ (Helpers)
@@ -127,28 +122,25 @@ function getStatusSeverity(status) {
         "Cảnh báo Cao!": 2,
         "Nguy hiểm!": 3
     };
-    return severityMap[status] ?? -1; // Trả về -1 nếu trạng thái không xác định
+    return severityMap[status] ?? -1;
 }
 
 /** Kiểm tra xem có nên gửi thông báo AI không */
 function shouldSendAIStatusNotification(lastStatus, currentStatus) {
-    if (!appState.fcmToken) { // Sửa: Dùng appState.fcmToken
+    if (!appState.fcmToken) {
         console.log("📱 Chưa có FCM token từ điện thoại, bỏ qua gửi thông báo!");
         return false;
     }
-    
-    // Gửi khi trạng thái thay đổi
     if (lastStatus !== currentStatus) {
         console.log(`🔄 Phát hiện thay đổi trạng thái AI: ${lastStatus} -> ${currentStatus}`);
         return true;
     }
-    
     return false;
 }
 
 /** Định dạng giây sang "X phút Y giây" */
 function formatCountdown(seconds) {
-    if (seconds < 0) return null;
+    if (seconds === null || seconds < 0) return null; // Trả về null nếu đầu vào là null
     
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = Math.round(seconds % 60);
@@ -177,7 +169,7 @@ function getNotificationBody(status, countdown) {
         "Bình thường": "Tình hình lũ hiện tại ổn định. Tiếp tục theo dõi.",
         "Cảnh báo!": "Mực nước đang tăng. Chuẩn bị sẵn sàng các biện pháp phòng ngừa.",
         "Cảnh báo Cao!": "Mực nước đang tăng nhanh. Sẵn sàng sơ tán nếu cần thiết.",
-        "Nguy hiểm!": "LŨ ĐANG Ở MỨC NGUY HIỂM! CẦN SƠ TÁN NGAY LẬP TỨC!"
+        "Nguy hiểm!": "LŨ ĐANG Ở MỨC NGUY HIỂM! CẦN SƠ TÁN NGAY LẬP TÍRC!"
     };
     
     let body = baseMessages[status] || `Trạng thái: ${status}`;
@@ -186,7 +178,6 @@ function getNotificationBody(status, countdown) {
     if (formattedTime && status !== "Bình thường") {
         body += ` Lũ dự kiến đến Điểm A sau khoảng ${formattedTime}.`;
         
-        // Thêm cảnh báo khẩn cấp nếu thời gian quá gấp
         if (countdown < 300 && status !== "Bình thường") { // Dưới 5 phút
             body += " HÃY DI CHUYỂN ĐẾN NƠI AN TOÀN NGAY!";
         }
@@ -205,7 +196,7 @@ async function sendPushNotificationInternal(title, body) {
         console.error("❌ Firebase Admin chưa khởi tạo, không thể gửi thông báo."); 
         return; 
     }
-    if (!appState.fcmToken) { // Kiểm tra lại
+    if (!appState.fcmToken) {
         console.warn("sendPushNotificationInternal: Bỏ qua vì fcmToken là null.");
         return false;
     }
@@ -215,14 +206,14 @@ async function sendPushNotificationInternal(title, body) {
             title: title, 
             body: body 
         },
-        token: appState.fcmToken, // Sửa: Dùng appState.fcmToken
+        token: appState.fcmToken,
         android: { 
             priority: 'high', 
             notification: { 
                 sound: 'default', 
-                channelId: 'FloodWarningChannel', // Quan trọng: Khớp với Android
-                icon: 'ic_warning', // Đảm bảo icon này tồn tại trên app
-                color: '#FF0000' // Màu đỏ cho cảnh báo
+                channelId: 'FloodWarningChannel',
+                icon: 'ic_warning',
+                color: '#FF0000'
             } 
         },
         apns: { 
@@ -243,10 +234,9 @@ async function sendPushNotificationInternal(title, body) {
         return true;
     } catch (error) {
         console.error(`❌ Lỗi khi gửi Push Notification (${error.code}): ${error.message}`);
-        // Nếu token sai, xóa nó đi để không gửi lỗi nữa
         if (error.code === 'messaging/registration-token-not-registered' || error.code === 'messaging/invalid-registration-token') {
             console.warn(`🗑️ FCM token không hợp lệ. Xóa token.`);
-            appState.fcmToken = null; // Sửa: Dùng appState.fcmToken
+            appState.fcmToken = null;
         }
         return false;
     }
@@ -258,10 +248,8 @@ async function sendAIStatusNotification(status, countdown) {
         console.error("❌ Firebase Admin chưa khởi tạo, không thể gửi thông báo AI."); 
         return; 
     }
-
     const title = getNotificationTitle(status);
     const body = getNotificationBody(status, countdown);
-    
     console.log(`📤 Chuẩn bị gửi thông báo AI: ${status}`);
     await sendPushNotificationInternal(title, body);
 }
@@ -272,10 +260,8 @@ async function sendRapidRiseNotification(rate) {
         console.error("❌ Firebase Admin chưa khởi tạo, không thể gửi thông báo dâng nhanh."); 
         return; 
     }
-
     const title = "🌊 Cảnh báo: Nước Dâng Nhanh!";
     const body = `Phát hiện mực nước tại điểm B đang dâng nhanh (${rate.toFixed(1)} cm/s). Hãy chú ý theo dõi và chuẩn bị sơ tán!`;
-    
     console.log(`📤 Chuẩn bị gửi thông báo dâng nhanh`);
     await sendPushNotificationInternal(title, body);
 }
@@ -292,8 +278,7 @@ app.post('/api/register_fcm_token', (req, res) => {
             console.warn("⚠️ Yêu cầu /api/register_fcm_token thiếu token.");
             return res.status(400).send({ error: 'Missing token in request body' });
         }
-        
-        appState.fcmToken = token; // Sửa: Dùng appState.fcmToken
+        appState.fcmToken = token;
         console.log(`✅ Đã nhận FCM token từ điện thoại: ${token.substring(0, 10)}...`);
         res.status(200).send({ message: 'Token received successfully' });
     } catch (error) {
@@ -330,7 +315,7 @@ app.post('/update', async (req, res) => {
         currentTime = Date.now();
 
         // 2. Tính toán tốc độ thay đổi
-        if (appState.lastSensorData.timestamp !== null) { // Sửa: Dùng appState
+        if (appState.lastSensorData.timestamp !== null) {
             const timeDiffSeconds = (currentTime - appState.lastSensorData.timestamp) / 1000;
             if (timeDiffSeconds > 0) {
                 b_rate_of_change = (mucNuocB - appState.lastSensorData.mucNuocB) / timeDiffSeconds;
@@ -340,13 +325,13 @@ app.post('/update', async (req, res) => {
         const currentSensorData = { mucNuocB, luuLuong, timestamp: currentTime };
 
         // 3. Xử lý Cảnh báo Dâng nhanh (Logic riêng)
-        if (b_rate_of_change > RAPID_RISE_THRESHOLD && !appState.sentRapidRiseNotification) { // Sửa: Dùng appState
+        if (b_rate_of_change > RAPID_RISE_THRESHOLD && !appState.sentRapidRiseNotification) {
             console.warn(`🌊 Phát hiện nước dâng nhanh! Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
             await sendRapidRiseNotification(b_rate_of_change);
-            appState.sentRapidRiseNotification = true; // Sửa: Dùng appState
-        } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) { // Sửa: Dùng appState
+            appState.sentRapidRiseNotification = true;
+        } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) {
             console.info("💧 Nước ngừng dâng nhanh.");
-            appState.sentRapidRiseNotification = false; // Sửa: Dùng appState
+            appState.sentRapidRiseNotification = false;
         }
 
         // 4. Gọi AI để dự đoán
@@ -371,56 +356,66 @@ app.post('/update', async (req, res) => {
             console.log(`[🧠 AI Status]: ${duDoanTrangThai}, Countdown: ${duDoanThoiGian >= 0 ? duDoanThoiGian.toFixed(2) + 's' : 'N/A'}`);
 
             // 5. Xử lý Cảnh báo AI
-            // Sửa: Dùng hàm shouldSendAIStatusNotification để kiểm tra token VÀ sự thay đổi
             if (shouldSendAIStatusNotification(appState.lastSentAIStatus, duDoanTrangThai)) {
                 console.log(`🔄 TRẠNG THÁI AI THAY ĐỔI: ${appState.lastSentAIStatus} -> ${duDoanTrangThai}`);
                 await sendAIStatusNotification(duDoanTrangThai, duDoanThoiGian);
-                appState.lastSentAIStatus = duDoanTrangThai; // Cập nhật trạng thái đã gửi
-                
-                // Reset thời gian cảnh báo nguy hiểm khi trạng thái thay đổi
+                appState.lastSentAIStatus = duDoanTrangThai;
                 if (duDoanTrangThai !== "Nguy hiểm!") {
-                    appState.lastDangerAlertTime = null; // Sửa: Dùng appState
+                    appState.lastDangerAlertTime = null;
                 }
             }
 
             // 6. Xử lý Cảnh báo Định kỳ (cho "Nguy hiểm!")
-            if (duDoanTrangThai === "Nguy hiểm!" && appState.fcmToken) { // Sửa: Dùng appState
+            if (duDoanTrangThai === "Nguy hiểm!" && appState.fcmToken) {
                 const now = Date.now();
-                // Gửi nếu chưa gửi lần nào HOẶC đã hơn 2 phút kể từ lần gửi trước
-                if (!appState.lastDangerAlertTime || (now - appState.lastDangerAlertTime) > 2 * 60 * 1000) { // Sửa: Dùng appState
+                if (!appState.lastDangerAlertTime || (now - appState.lastDangerAlertTime) > 2 * 60 * 1000) { // 2 phút
                     console.log("🔄 Gửi cảnh báo định kỳ cho trạng thái NGUY HIỂM");
                     await sendAIStatusNotification(duDoanTrangThai, duDoanThoiGian);
-                    appState.lastDangerAlertTime = now; // Sửa: Dùng appState
+                    appState.lastDangerAlertTime = now;
                 }
             }
 
         } catch (ai_err) {
             console.error("❌ Lỗi khi gọi API dự đoán (Python):", ai_err.message);
-            // Giữ nguyên trạng thái lỗi, không gửi thông báo
         }
 
-        // 7. Lưu vào CSDL
+        // ==========================================
+        // === 7. SỬA LỖI SQL (BẮT ĐẦU TỪ ĐÂY) ===
+        // ==========================================
+
+        // (Đoạn code "sạch" không có ký tự rác VÀ khớp kiểu dữ liệu)
         const sql = `INSERT INTO sensor_data 
             (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
             VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9)`;
+        
         const values = [
-            mucNuocA, mucNuocB, luuLuong, 
-            trangThaiSimulator, thongBaoSimulator, 
-            duDoanTrangThai, time_until_a_danger_simulator, 
-            duDoanThoiGian, isRaining
+            mucNuocA, // $1
+            mucNuocB, // $2
+            luuLuong, // $3
+            trangThaiSimulator, // $4
+            thongBaoSimulator, // $5
+            duDoanTrangThai, // $6
+            // $7 (Sửa): Dùng formatCountdown để khớp với CSDL (kiểu VARCHAR)
+            formatCountdown(time_until_a_danger_simulator ?? duDoanThoiGian), 
+            duDoanThoiGian, // $8
+            isRaining // $9
         ];
         
+        // ==========================================
+        // === (KẾT THÚC PHẦN SỬA LỖI SQL) ===
+        // ==========================================
+
         // Chỉ thực thi query nếu 'pool' đã được khởi tạo
         if (pool) {
             await pool.query(sql, values);
             console.log(`[✓] DB Save: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}, Mưa:${isRaining ? 'CÓ':'KO'}, Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
         } else {
             console.error("❌ Bỏ qua DB Save: CSDL pool chưa được khởi tạo.");
-        }
+  S     }
 
 
         // 8. Cập nhật trạng thái (sau khi mọi thứ thành công)
-        appState.lastSensorData = currentSensorData; // Sửa: Dùng appState
+        appState.lastSensorData = currentSensorData;
 
         // 9. Phản hồi
         res.status(200).json({
@@ -433,10 +428,9 @@ app.post('/update', async (req, res) => {
         // Xử lý lỗi chung
         console.error('❌ Lỗi không xác định trong /update:', err.message);
         
-        // Cập nhật trạng thái (nếu có thể) để tránh lỗi tính toán lần sau
         if (currentTime) {
             const body = req.body || {};
-            appState.lastSensorData = { // Sửa: Dùng appState
+            appState.lastSensorData = {
                 mucNuocB: parseFloat(body.mucNuocB) || appState.lastSensorData.mucNuocB || 0,
                 luuLuong: parseFloat(body.luuLuong) || appState.lastSensorData.luuLuong || 0,
                 timestamp: currentTime
@@ -510,14 +504,12 @@ app.get('/api/history_by_date', async (req, res) => {
     }
 });
 
-
 // =============================
 // KHỞI ĐỘNG SERVER
 // =============================
 app.listen(SERVER_PORT, () => {
-    // Railway sẽ dùng PORT động, nhưng log này vẫn hữu ích
     console.log(`🚀 Server Node.js đang chạy tại cổng: ${SERVER_PORT}`);
     console.log(`🧠 Đang kết nối tới API dự đoán tại: ${PYTHON_SERVER_URL}`);
     console.log(`📱 Hệ thống sẵn sàng nhận FCM token từ điện thoại!!`);
     console.log(`🔔 Hệ thống sẽ gửi cảnh báo KHI AI THAY ĐỔI TRẠNG THÁI`);
-}); 
+});
