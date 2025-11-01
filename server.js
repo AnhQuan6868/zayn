@@ -215,7 +215,7 @@ async function sendPushNotificationInternal(title, body) {
                 icon: 'ic_warning',
                 color: '#FF0000'
             } 
-         },
+        },
         apns: { 
             headers: { 'apns-priority': '10' }, 
             payload: { 
@@ -277,7 +277,7 @@ app.post('/api/register_fcm_token', (req, res) => {
         if (!token) {
             console.warn("⚠️ Yêu cầu /api/register_fcm_token thiếu token.");
             return res.status(400).send({ error: 'Missing token in request body' });
-      }
+        }
         appState.fcmToken = token;
         console.log(`✅ Đã nhận FCM token từ điện thoại: ${token.substring(0, 10)}...`);
         res.status(200).send({ message: 'Token received successfully' });
@@ -310,7 +310,7 @@ app.post('/update', async (req, res) => {
         if (isNaN(mucNuocA) || isNaN(mucNuocB) || isNaN(luuLuong) || body.isRaining === undefined) {
             console.warn("⚠️ Yêu cầu /update thiếu dữ liệu hoặc sai định dạng số.");
             return res.status(400).json({ error: 'Thiếu dữ liệu hoặc sai định dạng số' });
-  }
+        }
 
         currentTime = Date.now();
 
@@ -329,14 +329,14 @@ app.post('/update', async (req, res) => {
             console.warn(`🌊 Phát hiện nước dâng nhanh! Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
             await sendRapidRiseNotification(b_rate_of_change);
             appState.sentRapidRiseNotification = true;
-     } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) {
+        } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) {
             console.info("💧 Nước ngừng dâng nhanh.");
             appState.sentRapidRiseNotification = false;
         }
 
         // 4. Gọi AI để dự đoán
         const ab_diff = mucNuocB - mucNuocA;
-     const is_raining_now = isRaining ? 1 : 0;
+        const is_raining_now = isRaining ? 1 : 0;
         const ai_payload = { 
             mucNuocA, mucNuocB, luuLuong, 
             is_raining_now, b_rate_of_change, 
@@ -400,7 +400,7 @@ app.post('/update', async (req, res) => {
             duDoanThoiGian, // $8
             isRaining // $9
         ];
-     
+        
         // ==========================================
         // === (KẾT THÚC PHẦN SỬA LỖI SQL) ===
         // ==========================================
@@ -409,7 +409,7 @@ app.post('/update', async (req, res) => {
         if (pool) {
             await pool.query(sql, values);
             console.log(`[✓] DB Save: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}, Mưa:${isRaining ? 'CÓ':'KO'}, Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
-        } else {
+C   } else {
             console.error("❌ Bỏ qua DB Save: CSDL pool chưa được khởi tạo.");
         }
 
@@ -417,7 +417,7 @@ app.post('/update', async (req, res) => {
         // 8. Cập nhật trạng thái (sau khi mọi thứ thành công)
         appState.lastSensorData = currentSensorData;
 
-         // 9. Phản hồi
+          // 9. Phản hồi
         res.status(200).json({
             message: 'Đã lưu và dự đoán thành công.',
             prediction_status: duDoanTrangThai,
@@ -427,7 +427,7 @@ app.post('/update', async (req, res) => {
     } catch (err) {
         // Xử lý lỗi chung
         console.error('❌ Lỗi không xác định trong /update:', err.message);
-    
+      
         if (currentTime) {
             const body = req.body || {};
             appState.lastSensorData = {
@@ -438,7 +438,7 @@ app.post('/update', async (req, res) => {
         }
         
         res.status(500).json({
-            error: 'Lỗi server khi xử lý dữ liệu',
+S           error: 'Lỗi server khi xử lý dữ liệu',
             details: err.message,
             prediction_status: duDoanTrangThai,
             prediction_time: duDoanThoiGian
@@ -457,10 +457,10 @@ app.get('/data', async (req, res) => {
         const result = await pool.query(sql);
         if (result.rows.length === 0) {
             return res.status(404).json({ message: 'Chưa có dữ liệu.' });
-        }
+S       }
         res.status(200).json(result.rows[0]);
     } catch (err) {
-        console.error('❌ Lỗi khi lấy dữ liệu /data:', err.message);
+    _   console.error('❌ Lỗi khi lấy dữ liệu /data:', err.message);
         res.status(500).json({ error: 'Lỗi server khi lấy dữ liệu' });
     }
 });
@@ -480,7 +480,7 @@ app.get('/api/chart_data', async (req, res) => {
         res.status(200).json(result.rows);
     } catch (err) {
         console.error('❌ Lỗi khi lấy dữ liệu /api/chart_data:', err.message);
-    res.status(500).json({ error: 'Lỗi server khi lấy dữ liệu biểu đồ' });
+        res.status(500).json({ error: 'Lỗi server khi lấy dữ liệu biểu đồ' });
     }
 });
 
@@ -489,7 +489,7 @@ app.get('/api/history_by_date', async (req, res) => {
     if (!pool) {
         console.error("❌ Lỗi /api/history_by_date: CSDL pool chưa được khởi tạo.");
         return res.status(500).json({ error: 'Lỗi server: CSDL chưa sẵn sàng' });
-    }
+S   }
     try {
         const { date } = req.query;
         if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -498,7 +498,7 @@ app.get('/api/history_by_date', async (req, res) => {
         const sql = `SELECT * FROM sensor_data WHERE created_at::date = $1 ORDER BY id DESC;`;
         const result = await pool.query(sql, [date]);
         res.status(200).json(result.rows);
-    } catch (err) {
+s   } catch (err) {
         console.error('❌ Lỗi khi lấy lịch sử /api/history_by_date:', err.message);
         res.status(500).json({ error: 'Lỗi server khi lấy lịch sử' });
     }
@@ -511,5 +511,6 @@ app.listen(SERVER_PORT, () => {
     console.log(`🚀 Server Node.js đang chạy tại cổng: ${SERVER_PORT}`);
     console.log(`🧠 Đang kết nối tới API dự đoán tại: ${PYTHON_SERVER_URL}`);
     console.log(`📱 Hệ thống sẵn sàng nhận FCM token từ điện thoại!!`);
-    console.log(`🔔 Hệ thống sẽ gửi cảnh báo KHI AI THAY ĐỔI TRẠNG THÁI`);
-}); 
+  S   console.log(`🔔 Hệ thống sẽ gửi cảnh báo KHI AI THAY ĐỔI TRẠNG THÁI`);
+}); tôi tìm thấy một đống lỗi trong code của bạn đấy 
+lấy lại code của tôi đi
