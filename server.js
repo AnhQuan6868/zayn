@@ -310,7 +310,7 @@ app.post('/update', async (req, res) => {
         if (isNaN(mucNuocA) || isNaN(mucNuocB) || isNaN(luuLuong) || body.isRaining === undefined) {
             console.warn("⚠️ Yêu cầu /update thiếu dữ liệu hoặc sai định dạng số.");
             return res.status(400).json({ error: 'Thiếu dữ liệu hoặc sai định dạng số' });
-sv   }
+  }
 
         currentTime = Date.now();
 
@@ -329,7 +329,7 @@ sv   }
             console.warn(`🌊 Phát hiện nước dâng nhanh! Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
             await sendRapidRiseNotification(b_rate_of_change);
             appState.sentRapidRiseNotification = true;
-  S   } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) {
+     } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) {
             console.info("💧 Nước ngừng dâng nhanh.");
             appState.sentRapidRiseNotification = false;
         }
@@ -400,7 +400,7 @@ sv   }
             duDoanThoiGian, // $8
             isRaining // $9
         ];
-f     
+     
         // ==========================================
         // === (KẾT THÚC PHẦN SỬA LỖI SQL) ===
         // ==========================================
@@ -427,7 +427,7 @@ f    
     } catch (err) {
         // Xử lý lỗi chung
         console.error('❌ Lỗi không xác định trong /update:', err.message);
-JSON     
+    
         if (currentTime) {
             const body = req.body || {};
             appState.lastSensorData = {
