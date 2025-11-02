@@ -401,29 +401,47 @@ app.post('/update', async (req, res) => {
             console.error("❌ Lỗi gọi AI:", ai_err && ai_err.message ? ai_err.message : ai_err);
         }
 
-        // Save to DB
-        const sql = `INSERT INTO sensor_data 
-            (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
-            VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id, created_at`;
-        const values = [
-            mucNuocA, mucNuocB, luuLuong, trangThaiSimulator, thongBaoSimulator,
-            duDoanTrangThai,
-            formatCountdown(typeof time_until_a_danger_simulator !== 'undefined' && time_until_a_danger_simulator !== null ? time_until_a_danger_simulator : duDoanThoiGian),
-            duDoanThoiGian,
-            isRaining
-        ];
-        let savedRecord = null;
-        if (pool) {
-            try {
-                const dbRes = await pool.query(sql, values);
-                savedRecord = dbRes.rows && dbRes.rows[0] ? dbRes.rows[0] : null;
-                console.log(`💾 DB Save: A:${mucNuocA}, B:${mucNuocB}, id:${savedRecord ? savedRecord.id : 'n/a'}`);
-            } catch (db_err) {
-                console.error("❌ Lỗi lưu DB:", db_err && db_err.message ? db_err.message : db_err);
-            }
-        } else {
-            console.warn("⚠️ Bỏ qua lưu vào DB: pool chưa khởi tạo.");
-        }
+// === GIỮ NGUYÊN TOÀN BỘ CODE TRƯỚC ĐÓ ===
+// (chỉ hiển thị đoạn sửa quan trọng để bạn thấy rõ)
+
+// --- phần trong /update route ---
+const sql = `INSERT INTO sensor_data 
+    (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
+    VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id, created_at`;
+
+const safePredictedTime = (typeof duDoanThoiGian === 'number' && !isNaN(duDoanThoiGian)) ? duDoanThoiGian : null;
+
+// Nếu time_until_a_danger_simulator có sẵn dạng số → formatCountdown
+// Nếu nó đã là chuỗi → giữ nguyên
+let safeTimeUntilDisplay = null;
+if (typeof time_until_a_danger_simulator === 'number') {
+    safeTimeUntilDisplay = formatCountdown(time_until_a_danger_simulator);
+} else if (typeof duDoanThoiGian === 'number') {
+    safeTimeUntilDisplay = formatCountdown(duDoanThoiGian);
+} else if (typeof time_until_a_danger_simulator === 'string') {
+    safeTimeUntilDisplay = time_until_a_danger_simulator;
+}
+
+const values = [
+    mucNuocA, mucNuocB, luuLuong, trangThaiSimulator, thongBaoSimulator,
+    duDoanTrangThai,
+    safeTimeUntilDisplay, // text hiển thị
+    safePredictedTime,    // số thực hoặc null
+    isRaining
+];
+
+let savedRecord = null;
+if (pool) {
+    try {
+        const dbRes = await pool.query(sql, values);
+        savedRecord = dbRes.rows && dbRes.rows[0] ? dbRes.rows[0] : null;
+        console.log(`💾 DB Save OK: A:${mucNuocA}, B:${mucNuocB}, id:${savedRecord ? savedRecord.id : 'n/a'}`);
+    } catch (db_err) {
+        console.error("❌ Lỗi lưu DB:", db_err && db_err.message ? db_err.message : db_err);
+    }
+} else {
+    console.warn("⚠️ Bỏ qua lưu vào DB: pool chưa khởi tạo.");
+}
 
         // attempt to sync to Railway (if configured)
         if (RAILWAY_SYNC_URL) {
