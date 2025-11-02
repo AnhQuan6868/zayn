@@ -439,23 +439,49 @@ app.get('/data', async (req, res) => {
 });
 
 /** API: Lấy dữ liệu cho biểu đồ (ChartActivity) */
+/** ✅ API: Lấy dữ liệu cho biểu đồ (ChartActivity) - phiên bản ổn định */
 app.get('/api/chart_data', async (req, res) => {
-    if (!pool) {
-        console.error("❌ Lỗi /api/chart_data: CSDL pool chưa được khởi tạo.");
-        return res.status(500).json({ error: 'Lỗi server: CSDL chưa sẵn sàng' });
-    }
     try {
+        if (!pool) {
+            console.error("❌ Lỗi /api/chart_data: pool chưa khởi tạo.");
+            return res.status(500).json({ error: 'CSDL chưa sẵn sàng' });
+        }
+
+        // Giới hạn 300 mẫu gần nhất để giảm tải
         const sql = `
-            WITH Last300 AS ( SELECT * FROM sensor_data ORDER BY id DESC LIMIT 300 )
-            SELECT * FROM Last300 ORDER BY id ASC;
+            SELECT 
+                id,
+                mucnuoca,
+                mucnuocb,
+                luuluong,
+                predicted_trangthai,
+                created_at
+            FROM sensor_data
+            ORDER BY id DESC
+            LIMIT 300;
         `;
         const result = await pool.query(sql);
-        res.status(200).json(result.rows || []);
+
+        if (!result || !result.rows) {
+            console.warn("⚠️ Không có dữ liệu trả về từ bảng sensor_data.");
+            return res.status(200).json([]);
+        }
+
+        // Đảo ngược thứ tự để biểu đồ hiển thị đúng chiều thời gian
+        const rows = result.rows.reverse();
+
+        // Gửi dữ liệu JSON chuẩn về client
+        res.status(200).json(rows);
+
     } catch (err) {
-        console.error('❌ Lỗi khi lấy dữ liệu /api/chart_data:', err && err.message ? err.message : err);
-        res.status(500).json({ error: 'Lỗi server khi lấy dữ liệu biểu đồ' });
+        console.error('❌ /api/chart_data bị lỗi:', err.message || err);
+        res.status(500).json({
+            error: 'Lỗi server khi lấy dữ liệu biểu đồ',
+            details: err.message || err
+        });
     }
 });
+
 
 /** API: Lấy dữ liệu lịch sử theo ngày (HistoryActivity) */
 app.get('/api/history_by_date', async (req, res) => {
