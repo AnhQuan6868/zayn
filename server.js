@@ -532,7 +532,7 @@ app.listen(SERVER_PORT, () => {
     console.log(`🚀 Server Node.js đang chạy tại cổng: ${SERVER_PORT}`);
     console.log(`🧠 Kết nối tới AI Python: ${PYTHON_SERVER_URL}`);
     console.log("📱 Sẵn sàng nhận FCM token từ client.");
-  s   
+     
     // (CHỈ CHẠY TRÊN LOCAL: Bắt đầu đồng bộ token)
     if (railwayPool) {
         console.log(`🔄 [FCM Mailbox] Bắt đầu đồng bộ token mỗi ${TOKEN_SYNC_INTERVAL / 1000} giây...`);
