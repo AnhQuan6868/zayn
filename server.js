@@ -154,7 +154,6 @@ function getNotificationBody(status, countdown) {
     return body;
 }
 function shouldSendAIStatusNotification(lastStatus, currentStatus) {
-    // (SỬA LẠI: Bây giờ nó chỉ kiểm tra xem có token không)
     if (!appState.fcmToken) { 
         console.log("📱 Chưa có FCM token (đang chờ đồng bộ từ Cloud DB), bỏ qua thông báo!"); 
         return false; 
@@ -175,7 +174,7 @@ async function sendPushNotificationInternal(title, body) {
     
     const message = {
         notification: { title: title, body: body }, 
-        token: appState.fcmToken, // (SỬA LẠI: Dùng token đã đồng bộ từ CSDL)
+        token: appState.fcmToken, // Dùng token đã đồng bộ
         android: { priority: 'high', notification: { sound: 'default', channelId: 'FloodWarningChannel', icon: 'ic_warning', color: '#FF0000' } },
         apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default', alert: { title: title, body: body } } } }
     };
@@ -188,7 +187,6 @@ async function sendPushNotificationInternal(title, body) {
         console.error(`❌ Lỗi gửi Push Notification: ${error && error.message ? error.message : error}`);
         if (error && (error.code === 'messaging/registration-token-not-registered' || error.code === 'messaging/invalid-registration-token')) {
             console.warn(`🗑️ FCM token trong CSDL không hợp lệ. Đang chờ App gửi token mới...`); 
-            // (Tự động xóa token hỏng khỏi CSDL)
             if (railwayPool) {
                 try { await railwayPool.query("DELETE FROM fcm_tokens WHERE token = $1", [appState.fcmToken]); } catch (e) {}
             }
@@ -215,7 +213,6 @@ async function ensureTables() {
         return;
     }
     
-    // Bảng 1: Dữ liệu Cảm biến
     const createSqlSensorData = `
     CREATE TABLE IF NOT EXISTS sensor_data (
         id SERIAL PRIMARY KEY,
@@ -229,7 +226,6 @@ async function ensureTables() {
     );
     `;
     
-    // (BẢNG MỚI: "HỘP THƯ" TOKEN)
     const createSqlFcm = `
     CREATE TABLE IF NOT EXISTS fcm_tokens (
         id SERIAL PRIMARY KEY,
@@ -239,17 +235,14 @@ async function ensureTables() {
     `;
 
     try {
-        // Luôn chạy SQL Cảm biến trên CSDL chính
         await pool.query(createSqlSensorData);
         console.log(`✅ Bảng sensor_data (${process.env.DATABASE_URL ? 'Cloud' : 'Local'}) sẵn sàng.`);
         
-        // CHỈ CHẠY TRÊN CLOUD: Tạo bảng "Hộp thư" Token
         if (process.env.DATABASE_URL) {
             await pool.query(createSqlFcm);
             console.log("✅ Bảng fcm_tokens (Cloud) sẵn sàng.");
         }
         
-        // CHỈ CHẠY TRÊN LOCAL: Đảm bảo CSDL Cloud (Sync) cũng có cả 2 bảng
         if (railwayPool) {
             await railwayPool.query(createSqlSensorData);
             console.log("✅ Bảng sensor_data (Cloud Sync) sẵn sàng.");
@@ -260,28 +253,24 @@ async function ensureTables() {
         console.error("❌ Lỗi tạo bảng:", err && err.message ? err.message : err);
     }
 }
-ensureTables().catch(e=>console.error(e)); // Chạy khi khởi động
+ensureTables().catch(e=>console.error(e));
 
 // =============================
 // (HÀM MỚI: TỰ ĐỘNG LẤY TOKEN TỪ "HỘP THƯ")
 // =============================
 async function syncTokenFromCloudDB() {
-    // Hàm này CHỈ CHẠY ở LOCAL (Trạm trung chuyển)
-    if (!railwayPool) return; 
+    if (!railwayPool) return; // Chỉ chạy ở Local
     
     try {
-        // Luôn lấy token mới nhất (nếu có nhiều app)
         const res = await railwayPool.query("SELECT token FROM fcm_tokens ORDER BY id DESC LIMIT 1");
         
         if (res.rows.length > 0) {
             const cloudToken = res.rows[0].token;
-            // Nếu token thay đổi (ví dụ: app cài lại)
             if (cloudToken !== appState.fcmToken) {
                 console.log(`🔄 [FCM Mailbox] Đã đồng bộ token mới từ CSDL Cloud: ${cloudToken.substring(0,10)}...`);
                 appState.fcmToken = cloudToken;
             }
         } else {
-            // (Nếu CSDL Cloud không có token nào)
             if (appState.fcmToken !== null) {
                 console.log("⚠️ [FCM Mailbox] Không tìm thấy token nào trong CSDL Cloud. Đang chờ App gửi...");
                 appState.fcmToken = null;
@@ -299,15 +288,12 @@ app.get('/', (req, res) => {
     res.send({ status: 'OK', now: new Date().toISOString() });
 });
 
-// (API NÂNG CẤP: Dùng "Hộp thư")
 app.post('/api/register_fcm_token', async (req, res) => {
-    // API này CHỈ CHẠY TRÊN CLOUD (vì App Android luôn trỏ về Cloud)
     try {
         const { token } = req.body;
         if (!token) return res.status(400).json({ error: 'Missing token' });
 
-        // (SỬA LẠI: Thay vì lưu vào appState, LƯU VÀO "HỘP THƯ" CSDL)
-        if (pool) { // 'pool' ở đây là CSDL Cloud
+        if (pool) { // 'pool' ở đây là CSDL Cloud (nếu chạy trên Railway)
             // Xóa token cũ (Giả sử 1 user 1 điện thoại)
             await pool.query("DELETE FROM fcm_tokens;");
             // Thêm token mới
@@ -315,7 +301,7 @@ app.post('/api/register_fcm_token', async (req, res) => {
             console.log(`✅ [FCM Mailbox] Đã LƯU token mới vào CSDL Cloud: ${token.substring(0,10)}...`);
             res.json({ message: 'Token saved to DB' });
         } else {
-            console.error("❌ /api/register_fcm_token: Không thể lưu token, CSDL Cloud 'pool' chưa sẵn sàng.");
+            console.error("❌ /api/register_fcm_token: Không thể lưu token, 'pool' chưa sẵn sàng.");
             res.status(500).json({ error: 'Server DB error' });
         }
         
@@ -360,14 +346,16 @@ app.post('/update', async (req, res) => {
         }
         const currentSensorData = { mucNuocB, luuLuong, timestamp: currentTime };
 
-        // 3. Cảnh báo dâng nhanh
-        if (b_rate_of_change > RAPID_RISE_THRESHOLD && !appState.sentRapidRiseNotification) {
-            console.warn(`🌊 Nước dâng nhanh! Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
-            await sendRapidRiseNotification(b_rate_of_change);
-            appState.sentRapidRiseNotification = true;
-        } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) {
-            console.info("💧 Nước ngừng dâng nhanh.");
-            appState.sentRapidRiseNotification = false;
+        // 3. Cảnh báo dâng nhanh (CHỈ KHI CHẠY LOCAL)
+        if (!process.env.DATABASE_URL) {
+            if (b_rate_of_change > RAPID_RISE_THRESHOLD && !appState.sentRapidRiseNotification) {
+                console.warn(`🌊 Nước dâng nhanh! Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
+                await sendRapidRiseNotification(b_rate_of_change);
+                appState.sentRapidRiseNotification = true;
+            } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) {
+                console.info("💧 Nước ngừng dâng nhanh.");
+                appState.sentRapidRiseNotification = false;
+            }
         }
 
         // 4. Gọi AI (CHỈ KHI CHẠY LOCAL)
@@ -413,13 +401,16 @@ app.post('/update', async (req, res) => {
             (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
             VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id, created_at`;
 
+        // (ĐÃ SỬA LỖI TRÁO NGƯỢC "0 giây")
         const values = [
             mucNuocA, mucNuocB, luuLuong,
             trangThaiSimulator, thongBaoSimulator,
             duDoanTrangThai,
+            // $7 (CHỮ)
             formatCountdown(typeof time_until_a_danger_simulator === 'number' ? time_until_a_danger_simulator : duDoanThoiGian),
+            // $8 (SỐ)
             (typeof duDoanThoiGian === 'number' && !isNaN(duDoanThoiGian)) ? duDoanThoiGian : null,
-            isRaining
+            isRaining // $9
         ];
 
         const dbTasks = [];
