@@ -395,13 +395,13 @@ app.post('/update', async (req, res) => {
         }
 
         // ==========================================
-        // === 7. LƯU DỮ LIỆU VÀO DB (Gửi 2 nơi)
+        // === 7. LƯU DỮ LIỆU VÀO DB (Gửi 2 nơi) ===
         // ==========================================
         const sql = `INSERT INTO sensor_data 
             (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
             VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id, created_at`;
 
-        // (ĐÃ SỬA LỖI TRÁO NGƯỢC "0 giây")
+        // (ĐÂY LÀ PHIÊN BẢN ĐÃ SỬA LỖI TRÁO NGƯỢC)
         const values = [
             mucNuocA, mucNuocB, luuLuong,
             trangThaiSimulator, thongBaoSimulator,
