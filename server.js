@@ -1,19 +1,19 @@
 // DEBUG: kiểm tra biến môi trường
 console.log("--- BẮT ĐẦU DEBUG BIẾN MÔI TRƯỜNG ---");
 if (process.env.SERVICE_ACCOUNT_JSON) {
-  console.log("✅ [DEBUG] ĐÃ TÌM THẤY BIẾN SERVICE_ACCOUNT_JSON.");
+  console.log("✅ [DEBUG] ĐÃ TÌM THẤY BIẾN SERVICE_ACCOUNT_JSON.");
 } else {
-  console.log("❌ [DEBUG] KHÔNG TÌM THẤY BIẾN SERVICE_ACCOUNT_JSON.");
+  console.log("❌ [DEBUG] KHÔNG TÌM THẤY BIẾN SERVICE_ACCOUNT_JSON.");
 }
 if (process.env.DATABASE_URL) {
-  console.log("✅ [DEBUG] ĐÃ TÌM THẤY BIẾN DATABASE_URL.");
+  console.log("✅ [DEBUG] ĐÃ TÌM THẤY BIẾN DATABASE_URL.");
 } else {
-  console.log("❌ [DEBUG] KHÔNG TÌM THẤY BIẾN DATABASE_URL.");
+  console.log("❌ [DEBUG] KHÔNG TÌM THẤY BIẾN DATABASE_URL.");
 }
 if (process.env.RAILWAY_DB_URL) {
-  console.log("✅ [DEBUG] ĐÃ TÌM THẤY BIẾN ĐỒNG BỘ RAILWAY_DB_URL.");
+  console.log("✅ [DEBUG] ĐÃ TÌM THẤY BIẾN ĐỒNG BỘ RAILWAY_DB_URL.");
 } else {
-  console.log("⚠️ [DEBUG] KHÔNG TÌM THẤY BIẾN RAILWAY_DB_URL (Sẽ chỉ chạy local).");
+  console.log("⚠️ [DEBUG] KHÔNG TÌM THẤY BIẾN RAILWAY_DB_URL (Sẽ chỉ chạy local).");
 }
 console.log("--- KẾT THÚC DEBUG ---");
 
@@ -42,76 +42,76 @@ let pool; // Đây là CSDL chính (Local hoặc Cloud)
 let railwayPool; // Đây là CSDL Cloud (dùng cho trạm trung chuyển)
 
 try {
-    if (process.env.DATABASE_URL) {
-        // MÔI TRƯỜNG CLOUD (RAILWAY)
-        console.log("✅ [DB Config] Đang kết nối CSDL Cloud (sử dụng DATABASE_URL)...");
-        pool = new Pool({
-            connectionString: process.env.DATABASE_URL,
-            ssl: { rejectUnauthorized: false }
-        });
-        railwayPool = null; // (Trên Cloud, không cần trạm trung chuyển)
+    if (process.env.DATABASE_URL) {
+        // MÔI TRƯỜNG CLOUD (RAILWAY)
+        console.log("✅ [DB Config] Đang kết nối CSDL Cloud (sử dụng DATABASE_URL)...");
+        pool = new Pool({
+            connectionString: process.env.DATABASE_URL,
+            ssl: { rejectUnauthorized: false }
+        });
+        railwayPool = null; // (Trên Cloud, không cần trạm trung chuyển)
 
-    } else {
-        // MÔI TRƯỜNG LOCAL (MÁY BẠN)
-        console.log("⚠️ [DB Config] Đang kết nối CSDL Local (sử dụng DB_CONFIG)...");
-        const DB_CONFIG = {
-            user: process.env.DB_USER || 'postgres',
-            host: process.env.DB_HOST || 'localhost',
-            database: process.env.DB_NAME || 'flood_alert_db',
-            password: process.env.DB_PASS || 'Quan@',
-            port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432,
-        };
-        pool = new Pool(DB_CONFIG);
+    } else {
+        // MÔI TRƯỜNG LOCAL (MÁY BẠN)
+        console.log("⚠️ [DB Config] Đang kết nối CSDL Local (sử dụng DB_CONFIG)...");
+        const DB_CONFIG = {
+            user: process.env.DB_USER || 'postgres',
+            host: process.env.DB_HOST || 'localhost',
+            database: process.env.DB_NAME || 'flood_alert_db',
+            password: process.env.DB_PASS || 'Quan@',
+            port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432,
+        };
+        pool = new Pool(DB_CONFIG);
 
-        // (CHỨC NĂNG TRẠM TRUNG CHUYỂN: Kết nối CSDL Cloud từ file .env)
-        if (process.env.RAILWAY_DB_URL) {
-            railwayPool = new Pool({
-                connectionString: process.env.RAILWAY_DB_URL,
-                ssl: { rejectUnauthorized: false }
-            });
-            console.log("✅ [DB Sync] Đã kết nối CSDL Cloud (Railway) để sẵn sàng đồng bộ.");
-        } else {
-            console.warn("⚠️ [DB Sync] Không tìm thấy RAILWAY_DB_URL trong .env, sẽ chỉ lưu vào Local.");
-            railwayPool = null;
-        }
-    }
+        // (CHỨC NĂNG TRẠM TRUNG CHUYỂN: Kết nối CSDL Cloud từ file .env)
+        if (process.env.RAILWAY_DB_URL) {
+            railwayPool = new Pool({
+                connectionString: process.env.RAILWAY_DB_URL,
+                ssl: { rejectUnauthorized: false }
+            });
+            console.log("✅ [DB Sync] Đã kết nối CSDL Cloud (Railway) để sẵn sàng đồng bộ.");
+        } else {
+            console.warn("⚠️ [DB Sync] Không tìm thấy RAILWAY_DB_URL trong .env, sẽ chỉ lưu vào Local.");
+            railwayPool = null;
+        }
+    }
 } catch (dbErr) {
-    console.error("❌ LỖI NGHIÊM TRỌNG KHI KHỞI TẠO CSDL POOL:", dbErr.message);
+    console.error("❌ LỖI NGHIÊM TRỌNG KHI KHỞI TẠO CSDL POOL:", dbErr.message);
 }
 
 // =============================
 // KHỞI TẠO FIREBASE ADMIN
 // =============================
 try {
-    if (process.env.SERVICE_ACCOUNT_JSON) {
-        console.log("✅ [Firebase] Đang khởi tạo từ BIẾN MÔI TRƯỜNG (Cloud)...");
-        const serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
-        admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-        console.log("✅ Firebase Admin SDK đã khởi tạo từ BIẾN MÔI TRƯỜNG (Cloud).");
-    } else {
-        const localServicePath = path.join(__dirname, 'serviceAccountKey.json');
-        if (fs.existsSync(localServicePath)) {
-            console.log("⚠️ [Firebase] Đang khởi tạo từ file './serviceAccountKey.json' (Local)...");
-            const serviceAccount = require(localServicePath);
-            admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-            console.log("✅ Firebase Admin SDK đã khởi tạo từ FILE (Local).");
-        } else {
-            console.warn("⚠️ Firebase Admin chưa được khởi tạo: không tìm thấy SERVICE_ACCOUNT_JSON và serviceAccountKey.json.");
-        }
-    }
+    if (process.env.SERVICE_ACCOUNT_JSON) {
+        console.log("✅ [Firebase] Đang khởi tạo từ BIẾN MÔI TRƯỜNG (Cloud)...");
+        const serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
+        admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+        console.log("✅ Firebase Admin SDK đã khởi tạo từ BIẾN MÔI TRƯỜNG (Cloud).");
+    } else {
+        const localServicePath = path.join(__dirname, 'serviceAccountKey.json');
+        if (fs.existsSync(localServicePath)) {
+            console.log("⚠️ [Firebase] Đang khởi tạo từ file './serviceAccountKey.json' (Local)...");
+            const serviceAccount = require(localServicePath);
+            admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+            console.log("✅ Firebase Admin SDK đã khởi tạo từ FILE (Local).");
+        } else {
+            console.warn("⚠️ Firebase Admin chưa được khởi tạo: không tìm thấy SERVICE_ACCOUNT_JSON và serviceAccountKey.json.");
+        }
+    }
 } catch (error) {
-    console.error("❌ LỖI NGHIÊM TRỌNG KHI KHỞI TẠO FIREBASE ADMIN:", error && error.message ? error.message : error);
+    console.error("❌ LỖI NGHIÊM TRỌNG KHI KHỞI TẠO FIREBASE ADMIN:", error && error.message ? error.message : error);
 }
 
 // =============================
 // TRẠNG THÁI MÁY CHỦ (State)
 // =============================
 const appState = {
-    fcmToken: null, // Token này sẽ được 'syncTokenFromCloudDB' tự động điền
-    lastSensorData: { mucNuocB: null, luuLuong: null, timestamp: null },
-    lastSentAIStatus: "Bình thường",
-    sentRapidRiseNotification: false,
-    lastDangerAlertTime: null
+    fcmToken: null, // Token này sẽ được 'syncTokenFromCloudDB' tự động điền
+    lastSensorData: { mucNuocB: null, luuLuong: null, timestamp: null },
+    lastSentAIStatus: "Bình thường",
+    sentRapidRiseNotification: false,
+    lastDangerAlertTime: null
 };
 
 // =============================
@@ -126,139 +126,139 @@ const upload = multer({ dest: path.join(__dirname, 'uploads/') });
 // HÀM HỖ TRỢ (Helpers)
 // =============================
 function formatCountdown(seconds) {
-    if (seconds === null || seconds === undefined || isNaN(seconds) || seconds < 0) return null;
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = Math.round(seconds % 60);
-    return (minutes > 0) ? `${minutes} phút ${remainingSeconds} giây` : `${remainingSeconds} giây`;
+    if (seconds === null || seconds === undefined || isNaN(seconds) || seconds < 0) return null;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.round(seconds % 60);
+    return (minutes > 0) ? `${minutes} phút ${remainingSeconds} giây` : `${remainingSeconds} giây`;
 }
 function getNotificationTitle(status) {
-    const titleMap = {
-        "Bình thường": "✅ Tình hình ổn định", "Cảnh báo!": "⚠️ Cảnh báo Lũ",
-        "Cảnh báo Cao!": "🔶 Cảnh báo Lũ Cao", "Nguy hiểm!": "🚨 BÁO ĐỘNG NGUY HIỂM"
-    };
-    return titleMap[status] || `Cảnh báo: ${status}`;
+    const titleMap = {
+        "Bình thường": "✅ Tình hình ổn định", "Cảnh báo!": "⚠️ Cảnh báo Lũ",
+        "Cảnh báo Cao!": "🔶 Cảnh báo Lũ Cao", "Nguy hiểm!": "🚨 BÁO ĐỘNG NGUY HIỂM"
+    };
+    return titleMap[status] || `Cảnh báo: ${status}`;
 }
 function getNotificationBody(status, countdown) {
-    const baseMessages = {
-        "Bình thường": "Tình hình lũ hiện tại ổn định. Tiếp tục theo dõi.",
-        "Cảnh báo!": "Mực nước đang tăng. Chuẩn bị sẵn sàng các biện pháp phòng ngừa.",
-        "Cảnh báo Cao!": "Mực nước đang tăng nhanh. Sẵn sàng sơ tán nếu cần thiết.",
-        "Nguy hiểm!": "LŨ ĐANG Ở MỨC NGUY HIỂM! CẦN SƠ TÁN NGAY LẬP TỨC!"
-    };
-    let body = baseMessages[status] || `Trạng thái: ${status}`;
-    const formattedTime = formatCountdown(countdown);
-    if (formattedTime && status !== "Bình thường") {
-        body += ` Lũ dự kiến đến Điểm A sau khoảng ${formattedTime}.`;
-        if (countdown < 300) body += " HÃY DI CHUYỂN ĐẾN NƠI AN TOÀN NGAY!";
-    }
-    return body;
+    const baseMessages = {
+        "Bình thường": "Tình hình lũ hiện tại ổn định. Tiếp tục theo dõi.",
+        "Cảnh báo!": "Mực nước đang tăng. Chuẩn bị sẵn sàng các biện pháp phòng ngừa.",
+        "Cảnh báo Cao!": "Mực nước đang tăng nhanh. Sẵn sàng sơ tán nếu cần thiết.",
+        "Nguy hiểm!": "LŨ ĐANG Ở MỨC NGUY HIỂM! CẦN SƠ TÁN NGAY LẬP TỨC!"
+    };
+    let body = baseMessages[status] || `Trạng thái: ${status}`;
+    const formattedTime = formatCountdown(countdown);
+    if (formattedTime && status !== "Bình thường") {
+        body += ` Lũ dự kiến đến Điểm A sau khoảng ${formattedTime}.`;
+        if (countdown < 300) body += " HÃY DI CHUYỂN ĐẾN NƠI AN TOÀN NGAY!";
+    }
+    return body;
 }
 function shouldSendAIStatusNotification(lastStatus, currentStatus) {
-    // (SỬA LẠI: Bây giờ nó chỉ kiểm tra xem có token không)
-    if (!appState.fcmToken) { 
-        console.log("📱 Chưa có FCM token (đang chờ đồng bộ từ Cloud DB), bỏ qua thông báo!"); 
-        return false; 
-    }
-    if (lastStatus !== currentStatus) { console.log(`🔄 Thay đổi trạng thái AI: ${lastStatus} -> ${currentStatus}`); return true; }
-    return false;
+    // (SỬA LẠI: Bây giờ nó chỉ kiểm tra xem có token không)
+    if (!appState.fcmToken) { 
+        console.log("📱 Chưa có FCM token (đang chờ đồng bộ từ Cloud DB), bỏ qua thông báo!"); 
+        return false; 
+    }
+    if (lastStatus !== currentStatus) { console.log(`🔄 Thay đổi trạng thái AI: ${lastStatus} -> ${currentStatus}`); return true; }
+    return false;
 }
 
 // =============================
 // HÀM GỬI THÔNG BÁO PUSH
 // =============================
 async function sendPushNotificationInternal(title, body) {
-    if (!admin.apps.length) { console.error("❌ Firebase Admin chưa khởi tạo."); return false; }
-    if (!appState.fcmToken) { 
-        console.warn("sendPushNotificationInternal: Bỏ qua vì fcmToken là null (chưa đồng bộ được)."); 
-        return false; 
-    }
-    
-    const message = {
-        notification: { title: title, body: body }, 
-        token: appState.fcmToken, // (SỬA LẠI: Dùng token đã đồng bộ từ CSDL)
-        android: { priority: 'high', notification: { sound: 'default', channelId: 'FloodWarningChannel', icon: 'ic_warning', color: '#FF0000' } },
-        apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default', alert: { title: title, body: body } } } }
-    };
-    
-    try {
-        await admin.messaging().send(message);
-        console.log(`✅ ĐÃ GỬI THÔNG BÁO (đến ${appState.fcmToken.substring(0,10)}...): ${title}`); 
-        return true;
-    } catch (error) {
-        console.error(`❌ Lỗi gửi Push Notification: ${error && error.message ? error.message : error}`);
-        if (error && (error.code === 'messaging/registration-token-not-registered' || error.code === 'messaging/invalid-registration-token')) {
-            console.warn(`🗑️ FCM token trong CSDL không hợp lệ. Đang chờ App gửi token mới...`); 
-            // (Tự động xóa token hỏng khỏi CSDL)
-            if (railwayPool) {
-                try { await railwayPool.query("DELETE FROM fcm_tokens WHERE token = $1", [appState.fcmToken]); } catch (e) {}
-            }
-            appState.fcmToken = null;
-        }
-        return false;
-    }
+    if (!admin.apps.length) { console.error("❌ Firebase Admin chưa khởi tạo."); return false; }
+    if (!appState.fcmToken) { 
+        console.warn("sendPushNotificationInternal: Bỏ qua vì fcmToken là null (chưa đồng bộ được)."); 
+        return false; 
+    }
+    
+    const message = {
+        notification: { title: title, body: body }, 
+        token: appState.fcmToken, // (SỬA LẠI: Dùng token đã đồng bộ từ CSDL)
+        android: { priority: 'high', notification: { sound: 'default', channelId: 'FloodWarningChannel', icon: 'ic_warning', color: '#FF0000' } },
+        apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default', alert: { title: title, body: body } } } }
+    };
+    
+    try {
+        await admin.messaging().send(message);
+        console.log(`✅ ĐÃ GỬI THÔNG BÁO (đến ${appState.fcmToken.substring(0,10)}...): ${title}`); 
+        return true;
+    } catch (error) {
+        console.error(`❌ Lỗi gửi Push Notification: ${error && error.message ? error.message : error}`);
+        if (error && (error.code === 'messaging/registration-token-not-registered' || error.code === 'messaging/invalid-registration-token')) {
+            console.warn(`🗑️ FCM token trong CSDL không hợp lệ. Đang chờ App gửi token mới...`); 
+            // (Tự động xóa token hỏng khỏi CSDL)
+            if (railwayPool) {
+                try { await railwayPool.query("DELETE FROM fcm_tokens WHERE token = $1", [appState.fcmToken]); } catch (e) {}
+            }
+            appState.fcmToken = null;
+        }
+        return false;
+    }
 }
 async function sendAIStatusNotification(status, countdown) {
-    const title = getNotificationTitle(status); const body = getNotificationBody(status, countdown);
-    console.log(`📤 Chuẩn bị gửi thông báo AI: ${status}`); await sendPushNotificationInternal(title, body);
+    const title = getNotificationTitle(status); const body = getNotificationBody(status, countdown);
+    console.log(`📤 Chuẩn bị gửi thông báo AI: ${status}`); await sendPushNotificationInternal(title, body);
 }
 async function sendRapidRiseNotification(rate) {
-    const title = "🌊 Cảnh báo: Nước Dâng Nhanh!"; const body = `Phát hiện mực nước B đang dâng nhanh (${rate.toFixed(1)} cm/s).`;
-    console.log(`📤 Chuẩn bị gửi thông báo dâng nhanh`); await sendPushNotificationInternal(title, body);
+    const title = "🌊 Cảnh báo: Nước Dâng Nhanh!"; const body = `Phát hiện mực nước B đang dâng nhanh (${rate.toFixed(1)} cm/s).`;
+    console.log(`📤 Chuẩn bị gửi thông báo dâng nhanh`); await sendPushNotificationInternal(title, body);
 }
 
 // =============================
 // KHỞI TẠO BẢNG CSDL (Nếu chưa có)
 // =============================
 async function ensureTables() {
-    if (!pool) {
-        console.error("❌ Bỏ qua ensureTables: CSDL chính 'pool' chưa được khởi tạo.");
-        return;
-    }
-    
-    // Bảng 1: Dữ liệu Cảm biến
-    const createSqlSensorData = `
-    CREATE TABLE IF NOT EXISTS sensor_data (
-        id SERIAL PRIMARY KEY,
-        mucNuocA REAL, mucNuocB REAL, luuLuong REAL,
-        trangThai VARCHAR(255), thongBao TEXT,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        predicted_trangthai VARCHAR(255),
-        time_until_a_danger VARCHAR(255),
-        predicted_time_to_a REAL,
-        is_raining BOOLEAN
-    );
-    `;
-    
-    // (BẢNG MỚI: "HỘP THƯ" TOKEN)
-    const createSqlFcm = `
-    CREATE TABLE IF NOT EXISTS fcm_tokens (
-        id SERIAL PRIMARY KEY,
-        token TEXT NOT NULL UNIQUE,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-    );
-    `;
+    if (!pool) {
+        console.error("❌ Bỏ qua ensureTables: CSDL chính 'pool' chưa được khởi tạo.");
+        return;
+    }
+    
+    // Bảng 1: Dữ liệu Cảm biến
+    const createSqlSensorData = `
+    CREATE TABLE IF NOT EXISTS sensor_data (
+        id SERIAL PRIMARY KEY,
+        mucNuocA REAL, mucNuocB REAL, luuLuong REAL,
+        trangThai VARCHAR(255), thongBao TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        predicted_trangthai VARCHAR(255),
+        time_until_a_danger VARCHAR(255),
+        predicted_time_to_a REAL,
+        is_raining BOOLEAN
+    );
+    `;
+    
+    // (BẢNG MỚI: "HỘP THƯ" TOKEN)
+    const createSqlFcm = `
+    CREATE TABLE IF NOT EXISTS fcm_tokens (
+        id SERIAL PRIMARY KEY,
+        token TEXT NOT NULL UNIQUE,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    );
+    `;
 
-    try {
-        // Luôn chạy SQL Cảm biến trên CSDL chính
-        await pool.query(createSqlSensorData);
-        console.log(`✅ Bảng sensor_data (${process.env.DATABASE_URL ? 'Cloud' : 'Local'}) sẵn sàng.`);
-        
-        // CHỈ CHẠY TRÊN CLOUD: Tạo bảng "Hộp thư" Token
-        if (process.env.DATABASE_URL) {
-            await pool.query(createSqlFcm);
-            console.log("✅ Bảng fcm_tokens (Cloud) sẵn sàng.");
-        }
-        
-        // CHỈ CHẠY TRÊN LOCAL: Đảm bảo CSDL Cloud (Sync) cũng có cả 2 bảng
-        if (railwayPool) {
-            await railwayPool.query(createSqlSensorData);
-            console.log("✅ Bảng sensor_data (Cloud Sync) sẵn sàng.");
-            await railwayPool.query(createSqlFcm);
-            console.log("✅ Bảng fcm_tokens (Cloud Sync) sẵn sàng.");
-        }
-    } catch (err) {
-        console.error("❌ Lỗi tạo bảng:", err && err.message ? err.message : err);
-    }
+    try {
+        // Luôn chạy SQL Cảm biến trên CSDL chính
+        await pool.query(createSqlSensorData);
+        console.log(`✅ Bảng sensor_data (${process.env.DATABASE_URL ? 'Cloud' : 'Local'}) sẵn sàng.`);
+        
+        // CHỈ CHẠY TRÊN CLOUD: Tạo bảng "Hộp thư" Token
+        if (process.env.DATABASE_URL) {
+            await pool.query(createSqlFcm);
+            console.log("✅ Bảng fcm_tokens (Cloud) sẵn sàng.");
+        }
+        
+        // CHỈ CHẠY TRÊN LOCAL: Đảm bảo CSDL Cloud (Sync) cũng có cả 2 bảng
+        if (railwayPool) {
+            await railwayPool.query(createSqlSensorData);
+            console.log("✅ Bảng sensor_data (Cloud Sync) sẵn sàng.");
+            await railwayPool.query(createSqlFcm);
+            console.log("✅ Bảng fcm_tokens (Cloud Sync) sẵn sàng.");
+        }
+    } catch (err) {
+        console.error("❌ Lỗi tạo bảng:", err && err.message ? err.message : err);
+    }
 }
 ensureTables().catch(e=>console.error(e)); // Chạy khi khởi động
 
@@ -266,277 +266,277 @@ ensureTables().catch(e=>console.error(e)); // Chạy khi khởi động
 // (HÀM MỚI: TỰ ĐỘNG LẤY TOKEN TỪ "HỘP THƯ")
 // =============================
 async function syncTokenFromCloudDB() {
-    // Hàm này CHỈ CHẠY ở LOCAL (Trạm trung chuyển)
-    if (!railwayPool) return; 
-    
-    try {
-        // Luôn lấy token mới nhất (nếu có nhiều app)
-        const res = await railwayPool.query("SELECT token FROM fcm_tokens ORDER BY id DESC LIMIT 1");
-        
-        if (res.rows.length > 0) {
-            const cloudToken = res.rows[0].token;
-            // Nếu token thay đổi (ví dụ: app cài lại)
-            if (cloudToken !== appState.fcmToken) {
-                console.log(`🔄 [FCM Mailbox] Đã đồng bộ token mới từ CSDL Cloud: ${cloudToken.substring(0,10)}...`);
-                appState.fcmToken = cloudToken;
-            }
-        } else {
-            // (Nếu CSDL Cloud không có token nào)
-            if (appState.fcmToken !== null) {
-                console.log("⚠️ [FCM Mailbox] Không tìm thấy token nào trong CSDL Cloud. Đang chờ App gửi...");
-                appState.fcmToken = null;
-            }
-        }
-    } catch (err) {
-        console.error("❌ Lỗi đồng bộ FCM token từ Cloud DB:", err.message);
-    }
+    // Hàm này CHỈ CHẠY ở LOCAL (Trạm trung chuyển)
+    if (!railwayPool) return; 
+    
+    try {
+        // Luôn lấy token mới nhất (nếu có nhiều app)
+        const res = await railwayPool.query("SELECT token FROM fcm_tokens ORDER BY id DESC LIMIT 1");
+        
+        if (res.rows.length > 0) {
+            const cloudToken = res.rows[0].token;
+            // Nếu token thay đổi (ví dụ: app cài lại)
+            if (cloudToken !== appState.fcmToken) {
+                console.log(`🔄 [FCM Mailbox] Đã đồng bộ token mới từ CSDL Cloud: ${cloudToken.substring(0,10)}...`);
+                appState.fcmToken = cloudToken;
+            }
+        } else {
+            // (Nếu CSDL Cloud không có token nào)
+            if (appState.fcmToken !== null) {
+                console.log("⚠️ [FCM Mailbox] Không tìm thấy token nào trong CSDL Cloud. Đang chờ App gửi...");
+                appState.fcmToken = null;
+            }
+        }
+    } catch (err) {
+        console.error("❌ Lỗi đồng bộ FCM token từ Cloud DB:", err.message);
+    }
 }
 
 // =============================
 // API ENDPOINTS
 // =============================
 app.get('/', (req, res) => {
-    res.send({ status: 'OK', now: new Date().toISOString() });
+    res.send({ status: 'OK', now: new Date().toISOString() });
 });
 
 // (API NÂNG CẤP: Dùng "Hộp thư")
 app.post('/api/register_fcm_token', async (req, res) => {
-    // API này CHỈ CHẠY TRÊN CLOUD (vì App Android luôn trỏ về Cloud)
-    try {
-        const { token } = req.body;
-        if (!token) return res.status(400).json({ error: 'Missing token' });
+    // API này CHỈ CHẠY TRÊN CLOUD (vì App Android luôn trỏ về Cloud)
+    try {
+        const { token } = req.body;
+        if (!token) return res.status(400).json({ error: 'Missing token' });
 
-        // (SỬA LẠI: Thay vì lưu vào appState, LƯU VÀO "HỘP THƯ" CSDL)
-        if (pool) { // 'pool' ở đây là CSDL Cloud
-            // Xóa token cũ (Giả sử 1 user 1 điện thoại)
-            await pool.query("DELETE FROM fcm_tokens;");
-            // Thêm token mới
-            await pool.query("INSERT INTO fcm_tokens (token) VALUES ($1);", [token]);
-            console.log(`✅ [FCM Mailbox] Đã LƯU token mới vào CSDL Cloud: ${token.substring(0,10)}...`);
-            res.json({ message: 'Token saved to DB' });
-        } else {
-            console.error("❌ /api/register_fcm_token: Không thể lưu token, CSDL Cloud 'pool' chưa sẵn sàng.");
-            res.status(500).json({ error: 'Server DB error' });
-        }
-        
-    } catch (err) {
-        console.error("❌ /api/register_fcm_token error:", err && err.message ? err.message : err);
-        res.status(500).json({ error: 'Server error' });
-    }
+        // (SỬA LẠI: Thay vì lưu vào appState, LƯU VÀO "HỘP THƯ" CSDL)
+        if (pool) { // 'pool' ở đây là CSDL Cloud
+            // Xóa token cũ (Giả sử 1 user 1 điện thoại)
+            await pool.query("DELETE FROM fcm_tokens;");
+            // Thêm token mới
+            await pool.query("INSERT INTO fcm_tokens (token) VALUES ($1);", [token]);
+            console.log(`✅ [FCM Mailbox] Đã LƯU token mới vào CSDL Cloud: ${token.substring(0,10)}...`);
+            res.json({ message: 'Token saved to DB' });
+        } else {
+            console.error("❌ /api/register_fcm_token: Không thể lưu token, CSDL Cloud 'pool' chưa sẵn sàng.");
+            res.status(500).json({ error: 'Server DB error' });
+        }
+        
+    } catch (err) {
+        console.error("❌ /api/register_fcm_token error:", err && err.message ? err.message : err);
+        res.status(500).json({ error: 'Server error' });
+    }
 });
 
 app.post('/update', async (req, res) => {
-    let duDoanTrangThai = "Lỗi dự đoán";
-    let duDoanThoiGian = -1;
-    let b_rate_of_change = 0;
-    let flow_rate_of_change = 0;
-    let currentTime;
-    
-    try {
-        const body = req.body || {};
-        const { mucNuocA: mA, mucNuocB: mB, luuLuong: lL, isRaining: iR, trangThai: tS, thongBao: tBS, time_until_a_danger: tUAD } = body;
+    let duDoanTrangThai = "Lỗi dự đoán";
+    let duDoanThoiGian = -1;
+    let b_rate_of_change = 0;
+    let flow_rate_of_change = 0;
+    let currentTime;
+    
+    try {
+        const body = req.body || {};
+        const { mucNuocA: mA, mucNuocB: mB, luuLuong: lL, isRaining: iR, trangThai: tS, thongBao: tBS, time_until_a_danger: tUAD } = body;
 
-        const mucNuocA = parseFloat(mA); const mucNuocB = parseFloat(mB); const luuLuong = parseFloat(lL);
-        const isRaining = iR === true || iR === 'true';
-        const trangThaiSimulator = tS || '';
-        const thongBaoSimulator = tBS || ''; const time_until_a_danger_simulator = tUAD;
+        const mucNuocA = parseFloat(mA); const mucNuocB = parseFloat(mB); const luuLuong = parseFloat(lL);
+        const isRaining = iR === true || iR === 'true';
+        const trangThaiSimulator = tS || '';
+        const thongBaoSimulator = tBS || ''; const time_until_a_danger_simulator = tUAD;
 
-        if (isNaN(mucNuocA) || isNaN(mucNuocB) || isNaN(luuLuong) || typeof body.isRaining === 'undefined') {
-            console.warn("⚠️ Yêu cầu /update thiếu dữ liệu.");
-            return res.status(400).json({ error: 'Thiếu dữ liệu hoặc sai định dạng' });
-        }
+        if (isNaN(mucNuocA) || isNaN(mucNuocB) || isNaN(luuLuong) || typeof body.isRaining === 'undefined') {
+            console.warn("⚠️ Yêu cầu /update thiếu dữ liệu.");
+            return res.status(400).json({ error: 'Thiếu dữ liệu hoặc sai định dạng' });
+        }
 
-        currentTime = Date.now();
+        currentTime = Date.now();
 
-        // 2. Tính tốc độ thay đổi
-        if (appState.lastSensorData.timestamp !== null) {
-            const timeDiffSeconds = (currentTime - appState.lastSensorData.timestamp) / 1000;
-            if (timeDiffSeconds > 0) {
-                const lastB = appState.lastSensorData.mucNuocB !== null ? appState.lastSensorData.mucNuocB : mucNuocB;
-                const lastFlow = appState.lastSensorData.luuLuong !== null ? appState.lastSensorData.luuLuong : luuLuong;
-                b_rate_of_change = (mucNuocB - lastB) / timeDiffSeconds;
-                flow_rate_of_change = (luuLuong - lastFlow) / timeDiffSeconds;
-            }
-        }
-        const currentSensorData = { mucNuocB, luuLuong, timestamp: currentTime };
+        // 2. Tính tốc độ thay đổi
+        if (appState.lastSensorData.timestamp !== null) {
+            const timeDiffSeconds = (currentTime - appState.lastSensorData.timestamp) / 1000;
+            if (timeDiffSeconds > 0) {
+                const lastB = appState.lastSensorData.mucNuocB !== null ? appState.lastSensorData.mucNuocB : mucNuocB;
+                const lastFlow = appState.lastSensorData.luuLuong !== null ? appState.lastSensorData.luuLuong : luuLuong;
+                b_rate_of_change = (mucNuocB - lastB) / timeDiffSeconds;
+                flow_rate_of_change = (luuLuong - lastFlow) / timeDiffSeconds;
+            }
+        }
+        const currentSensorData = { mucNuocB, luuLuong, timestamp: currentTime };
 
-        // 3. Cảnh báo dâng nhanh
-        if (b_rate_of_change > RAPID_RISE_THRESHOLD && !appState.sentRapidRiseNotification) {
-            console.warn(`🌊 Nước dâng nhanh! Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
-            await sendRapidRiseNotification(b_rate_of_change);
-            appState.sentRapidRiseNotification = true;
-        } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) {
-            console.info("💧 Nước ngừng dâng nhanh.");
-            appState.sentRapidRiseNotification = false;
-        }
+        // 3. Cảnh báo dâng nhanh
+        if (b_rate_of_change > RAPID_RISE_THRESHOLD && !appState.sentRapidRiseNotification) {
+            console.warn(`🌊 Nước dâng nhanh! Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
+            await sendRapidRiseNotification(b_rate_of_change);
+            appState.sentRapidRiseNotification = true;
+        } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) {
+            console.info("💧 Nước ngừng dâng nhanh.");
+            appState.sentRapidRiseNotification = false;
+        }
 
-        // 4. Gọi AI (CHỈ KHI CHẠY LOCAL)
-        if (!process.env.DATABASE_URL) {
-            try {
-                const ai_payload = { 
-                    mucNuocA, mucNuocB, luuLuong, is_raining_now: isRaining ? 1 : 0, 
-                    b_rate_of_change, flow_rate_of_change, ab_diff: mucNuocB - mucNuocA 
-                };
-                const [statusRes, timeRes] = await Promise.all([
-                    axios.post(`${PYTHON_SERVER_URL}/predict`, ai_payload, { timeout: 6000 }),
-                    axios.post(`${PYTHON_SERVER_URL}/predict_time`, ai_payload, { timeout: 6000 })
-                ]);
-                duDoanTrangThai = statusRes?.data?.prediction || duDoanTrangThai;
-                duDoanThoiGian = parseFloat(timeRes?.data?.predicted_seconds) || -1;
-                console.log(`[🧠 AI Status]: ${duDoanTrangThai}, Countdown: ${duDoanThoiGian >= 0 ? duDoanThoiGian.toFixed(2) + 's' : 'N/A'}`);
-            } catch (ai_err) {
-                console.error("❌ Lỗi gọi API dự đoán (Python):", ai_err && ai_err.message ? ai_err.message : ai_err);
-            }
-        }
+        // 4. Gọi AI (CHỈ KHI CHẠY LOCAL)
+        if (!process.env.DATABASE_URL) {
+            try {
+                const ai_payload = { 
+                    mucNuocA, mucNuocB, luuLuong, is_raining_now: isRaining ? 1 : 0, 
+                    b_rate_of_change, flow_rate_of_change, ab_diff: mucNuocB - mucNuocA 
+                };
+                const [statusRes, timeRes] = await Promise.all([
+                    axios.post(`${PYTHON_SERVER_URL}/predict`, ai_payload, { timeout: 6000 }),
+                    axios.post(`${PYTHON_SERVER_URL}/predict_time`, ai_payload, { timeout: 6000 })
+                ]);
+                duDoanTrangThai = statusRes?.data?.prediction || duDoanTrangThai;
+                duDoanThoiGian = parseFloat(timeRes?.data?.predicted_seconds) || -1;
+                console.log(`[🧠 AI Status]: ${duDoanTrangThai}, Countdown: ${duDoanThoiGian >= 0 ? duDoanThoiGian.toFixed(2) + 's' : 'N/A'}`);
+            } catch (ai_err) {
+                console.error("❌ Lỗi gọi API dự đoán (Python):", ai_err && ai_err.message ? ai_err.message : ai_err);
+            }
+        }
 
-        // 5. Gửi thông báo (CHỈ KHI CHẠY LOCAL)
-        if (!process.env.DATABASE_URL) {
-            if (shouldSendAIStatusNotification(appState.lastSentAIStatus, duDoanTrangThai)) {
-                await sendAIStatusNotification(duDoanTrangThai, duDoanThoiGian);
-                appState.lastSentAIStatus = duDoanTrangThai;
-                if (duDoanTrangThai !== "Nguy hiểm!") appState.lastDangerAlertTime = null;
-            }
-            if (duDoanTrangThai === "Nguy hiểm!" && appState.fcmToken) {
-                const now = Date.now();
-                if (!appState.lastDangerAlertTime || (now - appState.lastDangerAlertTime) > 2 * 60 * 1000) {
-                    console.log("🔄 Gửi cảnh báo định kỳ NGUY HIỂM");
-                    await sendAIStatusNotification(duDoanTrangThai, duDoanThoiGian);
-                    appState.lastDangerAlertTime = now;
-                }
-            }
-        }
+        // 5. Gửi thông báo (CHỈ KHI CHẠY LOCAL)
+        if (!process.env.DATABASE_URL) {
+            if (shouldSendAIStatusNotification(appState.lastSentAIStatus, duDoanTrangThai)) {
+                await sendAIStatusNotification(duDoanTrangThai, duDoanThoiGian);
+                appState.lastSentAIStatus = duDoanTrangThai;
+                if (duDoanTrangThai !== "Nguy hiểm!") appState.lastDangerAlertTime = null;
+            }
+            if (duDoanTrangThai === "Nguy hiểm!" && appState.fcmToken) {
+                const now = Date.now();
+                if (!appState.lastDangerAlertTime || (now - appState.lastDangerAlertTime) > 2 * 60 * 1000) {
+                    console.log("🔄 Gửi cảnh báo định kỳ NGUY HIỂM");
+                    await sendAIStatusNotification(duDoanTrangThai, duDoanThoiGian);
+                    appState.lastDangerAlertTime = now;
+                }
+            }
+        }
 
-        // ==========================================
-        // === 7. LƯU DỮ LIỆU VÀO DB (Gửi 2 nơi)
-        // ==========================================
-        const sql = `INSERT INTO sensor_data 
-            (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
-            VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id, created_at`;
+        // ==========================================
+        // === 7. LƯU DỮ LIỆU VÀO DB (Gửi 2 nơi)
+        // ==========================================
+        const sql = `INSERT INTO sensor_data 
+            (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
+            VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id, created_at`;
 
-        const values = [
-            mucNuocA, mucNuocB, luuLuong,
-            trangThaiSimulator, thongBaoSimulator,
-            duDoanTrangThai,
-            formatCountdown(typeof time_until_a_danger_simulator === 'number' ? time_until_a_danger_simulator : duDoanThoiGian),
-            (typeof duDoanThoiGian === 'number' && !isNaN(duDoanThoiGian)) ? duDoanThoiGian : null,
-            isRaining
-        ];
+        const values = [
+            mucNuocA, mucNuocB, luuLuong,
+            trangThaiSimulator, thongBaoSimulator,
+            duDoanTrangThai,
+            formatCountdown(typeof time_until_a_danger_simulator === 'number' ? time_until_a_danger_simulator : duDoanThoiGian),
+            (typeof duDoanThoiGian === 'number' && !isNaN(duDoanThoiGian)) ? duDoanThoiGian : null,
+            isRaining
+        ];
 
-        const dbTasks = [];
-        const logMsg = `[DB Save]: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}`;
-        
-        if (pool) {
-            dbTasks.push(
-                pool.query(sql, values)
-                    .then((dbRes) => {
-                        console.log(`[✓] ${process.env.DATABASE_URL ? '[Cloud]' : '[Local]'} ${logMsg}`);
-                    })
-                    .catch(err => console.error(`❌ Lỗi ${process.env.DATABASE_URL ? '[Cloud]' : '[Local]'} DB Save:`, err.message))
-            );
-        }
+        const dbTasks = [];
+        const logMsg = `[DB Save]: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}`;
+        
+        if (pool) {
+            dbTasks.push(
+                pool.query(sql, values)
+                    .then((dbRes) => {
+                        console.log(`[✓] ${process.env.DATABASE_URL ? '[Cloud]' : '[Local]'} ${logMsg}`);
+                    })
+                    .catch(err => console.error(`❌ Lỗi ${process.env.DATABASE_URL ? '[Cloud]' : '[Local]'} DB Save:`, err.message))
+            );
+        }
 
-        // CHỈ KHI CHẠY LOCAL (Trạm trung chuyển)
-        if (railwayPool) {
-            dbTasks.push(
-                railwayPool.query(sql, values)
-                    .then(() => console.log(`[✓] [Sync->Cloud] ${logMsg}`))
-                    .catch(err => console.error("❌ Lỗi [Sync->Cloud] DB Save:", err.message))
-            );
-        }
+        // CHỈ KHI CHẠY LOCAL (Trạm trung chuyển)
+        if (railwayPool) {
+            dbTasks.push(
+                railwayPool.query(sql, values)
+                    .then(() => console.log(`[✓] [Sync->Cloud] ${logMsg}`))
+                    .catch(err => console.error("❌ Lỗi [Sync->Cloud] DB Save:", err.message))
+            );
+        }
 
-        await Promise.all(dbTasks);
+        await Promise.all(dbTasks);
 
-        // 8. Cập nhật trạng thái
-        appState.lastSensorData = currentSensorData;
+        // 8. Cập nhật trạng thái
+        appState.lastSensorData = currentSensorData;
 
-        // 9. Phản hồi
-        res.status(200).json({
-            message: 'Đã lưu và dự đoán thành công.',
-            prediction_status: duDoanTrangThai,
-            prediction_time: duDoanThoiGian
-        });
+        // 9. Phản hồi
+        res.status(200).json({
+            message: 'Đã lưu và dự đoán thành công.',
+            prediction_status: duDoanTrangThai,
+            prediction_time: duDoanThoiGian
+        });
 
-    } catch (err) {
-        console.error("❌ Lỗi /update:", err && err.message ? err.message : err);
-        if (currentTime) {
-            const body = req.body || {};
-            appState.lastSensorData = {
-                mucNuocB: parseFloat(body.mucNuocB) || appState.lastSensorData.mucNuocB || 0,
-                luuLuong: parseFloat(body.luuLuong) || appState.lastSensorData.luuLuong || 0,
-                timestamp: currentTime
-            };
-        }
-        res.status(500).json({ error: 'Lỗi server khi xử lý dữ liệu', details: err && err.message ? err.message : err });
-    }
+    } catch (err) {
+        console.error("❌ Lỗi /update:", err && err.message ? err.message : err);
+        if (currentTime) {
+            const body = req.body || {};
+            appState.lastSensorData = {
+                mucNuocB: parseFloat(body.mucNuocB) || appState.lastSensorData.mucNuocB || 0,
+                luuLuong: parseFloat(body.luuLuong) || appState.lastSensorData.luuLuong || 0,
+                timestamp: currentTime
+            };
+        }
+        res.status(500).json({ error: 'Lỗi server khi xử lý dữ liệu', details: err && err.message ? err.message : err });
+    }
 });
 
 // Get latest data
 app.get('/data', async (req, res) => {
-    if (!pool) return res.status(500).json({ error: 'CSDL chưa sẵn sàng' });
-    try {
-        const sql = 'SELECT * FROM sensor_data ORDER BY id DESC LIMIT 1';
-        const result = await pool.query(sql);
-        if (!result || !result.rows || result.rows.length === 0) return res.status(404).json({ message: 'Chưa có dữ liệu.' });
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error("❌ /data error:", err && err.message ? err.message : err);
-        res.status(500).json({ error: 'Lỗi server khi lấy dữ liệu' });
-    }
+    if (!pool) return res.status(500).json({ error: 'CSDL chưa sẵn sàng' });
+    try {
+        const sql = 'SELECT * FROM sensor_data ORDER BY id DESC LIMIT 1';
+        const result = await pool.query(sql);
+        if (!result || !result.rows || result.rows.length === 0) return res.status(404).json({ message: 'Chưa có dữ liệu.' });
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error("❌ /data error:", err && err.message ? err.message : err);
+        res.status(500).json({ error: 'Lỗi server khi lấy dữ liệu' });
+    }
 });
 
 // Chart data - last N samples
 app.get('/api/chart_data', async (req, res) => {
-    try {
-        if (!pool) return res.status(500).json({ error: 'CSDL chưa sẵn sàng' });
-        const sql = `
-            SELECT id, mucnuoca, mucnuocb, luuluong, predicted_trangthai, created_at
-            FROM sensor_data
-            ORDER BY id DESC
-            LIMIT 300;
-        `;
-        const result = await pool.query(sql);
-        const rows = (result.rows || []).reverse();
-        res.json(rows);
-    } catch (err) {
-        console.error("❌ /api/chart_data error:", err && err.message ? err.message : err);
-        res.status(500).json({ error: 'Lỗi server khi lấy dữ liệu biểu đồ' });
-    }
+    try {
+        if (!pool) return res.status(500).json({ error: 'CSDL chưa sẵn sàng' });
+        const sql = `
+            SELECT id, mucnuoca, mucnuocb, luuluong, predicted_trangthai, created_at
+            FROM sensor_data
+            ORDER BY id DESC
+            LIMIT 300;
+        `;
+        const result = await pool.query(sql);
+        const rows = (result.rows || []).reverse();
+        res.json(rows);
+    } catch (err) {
+        console.error("❌ /api/chart_data error:", err && err.message ? err.message : err);
+        res.status(500).json({ error: 'Lỗi server khi lấy dữ liệu biểu đồ' });
+    }
 });
 
 // History by date
 app.get('/api/history_by_date', async (req, res) => {
-    if (!pool) return res.status(500).json({ error: 'CSDL chưa sẵn sàng' });
-    try {
-        const { date } = req.query;
-        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-            return res.status(400).json({ error: 'Thiếu hoặc sai định dạng tham số ngày (YYYY-MM-DD)' });
-        }
-        // (ĐÃ SỬA LỖI TIMEZONE)
-        const sql = `SELECT * FROM sensor_data WHERE (created_at AT TIME ZONE '+07')::date = $1 ORDER BY id DESC;`;
-        const result = await pool.query(sql, [date]);
-        res.json(result.rows || []);
-    } catch (err) {
-        console.error("❌ /api/history_by_date error:", err && err.message ? err.message : err);
-        res.status(500).json({ error: 'Lỗi server khi lấy lịch sử' });
-    }
+    if (!pool) return res.status(500).json({ error: 'CSDL chưa sẵn sàng' });
+    try {
+        const { date } = req.query;
+        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+            return res.status(400).json({ error: 'Thiếu hoặc sai định dạng tham số ngày (YYYY-MM-DD)' });
+        }
+        // (ĐÃ SỬA LỖI TIMEZONE)
+        const sql = `SELECT * FROM sensor_data WHERE (created_at AT TIME ZONE '+07')::date = $1 ORDER BY id DESC;`;
+        const result = await pool.query(sql, [date]);
+        res.json(result.rows || []);
+    } catch (err) {
+        console.error("❌ /api/history_by_date error:", err && err.message ? err.message : err);
+        res.status(500).json({ error: 'Lỗi server khi lấy lịch sử' });
+    }
 });
 
 // API /upload (Giữ lại từ file index.js)
 app.post('/upload', upload.single('file'), (req, res) => {
-    if (!req.file) return res.status(400).json({ error: 'No file' });
-    res.json({ filename: req.file.filename, originalname: req.file.originalname });
+    if (!req.file) return res.status(400).json({ error: 'No file' });
+    res.json({ filename: req.file.filename, originalname: req.file.originalname });
 });
 
 // --------------- START SERVER ----------------
 app.listen(SERVER_PORT, () => {
-    console.log(`🚀 Server Node.js đang chạy tại cổng: ${SERVER_PORT}`);
-    console.log(`🧠 Kết nối tới AI Python: ${PYTHON_SERVER_URL}`);
-    console.log("📱 Sẵn sàng nhận FCM token từ client.");
-     
-    // (CHỈ CHẠY TRÊN LOCAL: Bắt đầu đồng bộ token)
-    if (railwayPool) {
-        console.log(`🔄 [FCM Mailbox] Bắt đầu đồng bộ token mỗi ${TOKEN_SYNC_INTERVAL / 1000} giây...`);
-        syncTokenFromCloudDB(); // Chạy 1 lần ngay
-        setInterval(syncTokenFromCloudDB, TOKEN_SYNC_INTERVAL); // Chạy lặp lại
-    }
+    console.log(`🚀 Server Node.js đang chạy tại cổng: ${SERVER_PORT}`);
+    console.log(`🧠 Kết nối tới AI Python: ${PYTHON_SERVER_URL}`);
+    console.log("📱 Sẵn sàng nhận FCM token từ client.");
+    
+    // (CHỈ CHẠY TRÊN LOCAL: Bắt đầu đồng bộ token)
+    if (railwayPool) {
+        console.log(`🔄 [FCM Mailbox] Bắt đầu đồng bộ token mỗi ${TOKEN_SYNC_INTERVAL / 1000} giây...`);
+        syncTokenFromCloudDB(); // Chạy 1 lần ngay
+        setInterval(syncTokenFromCloudDB, TOKEN_SYNC_INTERVAL); // Chạy lặp lại
+    }
 });
