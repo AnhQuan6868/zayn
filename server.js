@@ -25,7 +25,7 @@ require('dotenv').config(); // Đọc file .env
 const admin = require('firebase-admin');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs'); // Thêm fs
+const fs = require('fs');
 
 // =============================
 // CẤU HÌNH HỆ THỐNG
@@ -37,21 +37,18 @@ const RAPID_RISE_THRESHOLD = 0.5; // cm/giây
 // =============================
 // KHỞI TẠO CSDL (DATABASE)
 // =============================
-let pool; // Đây là CSDL chính (Local hoặc Cloud)
-let railwayPool; // Đây là CSDL Cloud (dùng cho trạm trung chuyển)
+let pool;
+let railwayPool;
 
 try {
     if (process.env.DATABASE_URL) {
-        // MÔI TRƯỜNG CLOUD (RAILWAY)
         console.log("✅ [DB Config] Đang kết nối CSDL Cloud (sử dụng DATABASE_URL)...");
         pool = new Pool({
             connectionString: process.env.DATABASE_URL,
             ssl: { rejectUnauthorized: false }
         });
-        railwayPool = null; // (Trên Cloud, không cần trạm trung chuyển)
-
+        railwayPool = null;
     } else {
-        // MÔI TRƯỜNG LOCAL (MÁY BẠN)
         console.log("⚠️ [DB Config] Đang kết nối CSDL Local (sử dụng DB_CONFIG)...");
         const DB_CONFIG = {
             user: process.env.DB_USER || 'postgres',
@@ -62,7 +59,6 @@ try {
         };
         pool = new Pool(DB_CONFIG);
 
-        // (CHỨC NĂNG TRẠM TRUNG CHUYỂN: Kết nối CSDL Cloud từ file .env)
         if (process.env.RAILWAY_DB_URL) {
             railwayPool = new Pool({
                 connectionString: process.env.RAILWAY_DB_URL,
@@ -130,6 +126,7 @@ function formatCountdown(seconds) {
     const remainingSeconds = Math.round(seconds % 60);
     return (minutes > 0) ? `${minutes} phút ${remainingSeconds} giây` : `${remainingSeconds} giây`;
 }
+
 function getNotificationTitle(status) {
     const titleMap = {
         "Bình thường": "✅ Tình hình ổn định", "Cảnh báo!": "⚠️ Cảnh báo Lũ",
@@ -137,6 +134,7 @@ function getNotificationTitle(status) {
     };
     return titleMap[status] || `Cảnh báo: ${status}`;
 }
+
 function getNotificationBody(status, countdown) {
     const baseMessages = {
         "Bình thường": "Tình hình lũ hiện tại ổn định. Tiếp tục theo dõi.",
@@ -152,6 +150,7 @@ function getNotificationBody(status, countdown) {
     }
     return body;
 }
+
 function shouldSendAIStatusNotification(lastStatus, currentStatus) {
     if (!appState.fcmToken) { console.log("📱 Chưa có FCM token, bỏ qua thông báo!"); return false; }
     if (lastStatus !== currentStatus) { console.log(`🔄 Thay đổi trạng thái AI: ${lastStatus} -> ${currentStatus}`); return true; }
@@ -180,10 +179,12 @@ async function sendPushNotificationInternal(title, body) {
         return false;
     }
 }
+
 async function sendAIStatusNotification(status, countdown) {
     const title = getNotificationTitle(status); const body = getNotificationBody(status, countdown);
     console.log(`📤 Chuẩn bị gửi thông báo AI: ${status}`); await sendPushNotificationInternal(title, body);
 }
+
 async function sendRapidRiseNotification(rate) {
     const title = "🌊 Cảnh báo: Nước Dâng Nhanh!"; const body = `Phát hiện mực nước B đang dâng nhanh (${rate.toFixed(1)} cm/s).`;
     console.log(`📤 Chuẩn bị gửi thông báo dâng nhanh`); await sendPushNotificationInternal(title, body);
@@ -215,7 +216,6 @@ async function ensureTables() {
     try {
         await pool.query(createSql);
         console.log(`✅ Bảng sensor_data (${process.env.DATABASE_URL ? 'Cloud' : 'Local'}) sẵn sàng.`);
-        // Đảm bảo bảng CSDL Cloud cũng tồn tại
         if (railwayPool) {
             await railwayPool.query(createSql);
             console.log("✅ Bảng sensor_data (Cloud Sync) sẵn sàng.");
@@ -224,7 +224,7 @@ async function ensureTables() {
         console.error("❌ Lỗi tạo bảng sensor_data:", err && err.message ? err.message : err);
     }
 }
-ensureTables().catch(e=>console.error(e)); // Chạy khi khởi động
+ensureTables().catch(e=>console.error(e));
 
 // =============================
 // API ENDPOINTS
@@ -252,6 +252,7 @@ app.post('/update', async (req, res) => {
     let b_rate_of_change = 0;
     let flow_rate_of_change = 0;
     let currentTime;
+    
     try {
         const body = req.body || {};
         const { mucNuocA: mA, mucNuocB: mB, luuLuong: lL, isRaining: iR, trangThai: tS, thongBao: tBS, time_until_a_danger: tUAD } = body;
@@ -291,8 +292,7 @@ app.post('/update', async (req, res) => {
         }
 
         // 4. Gọi AI
-        // (CHỈ GỌI AI NẾU SERVER LÀ LOCAL HOẶC BIẾN CLOUD_AI=true)
-        if (!process.env.DATABASE_URL || process.env.CLOUD_AI === 'true') {
+        if (!process.env.DATABASE_URL) {
             try {
                 const ai_payload = { 
                     mucNuocA, mucNuocB, luuLuong, is_raining_now: isRaining ? 1 : 0, 
@@ -332,30 +332,22 @@ app.post('/update', async (req, res) => {
             (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
             VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id, created_at`;
 
-        // (SỬA LỖI TRÁO NGƯỢC "0 giây" - ĐÃ SỬA)
         const values = [
-            mucNuocA, // $1
-            mucNuocB, // $2
-            luuLuong, // $3
-            trangThaiSimulator, // $4
-            thongBaoSimulator, // $5
-            duDoanTrangThai, // $6
-            
-            // $7 (CHO CỘT "time_until_a_danger" [VARCHAR/STRING])
-            formatCountdown(typeof time_until_a_danger_simulator === 'number' ? time_until_a_danger_simulator : duDoanThoiGian), 
-            
-            // $8 (CHO CỘT "predicted_time_to_a" [REAL/NUMBER])
-            (typeof duDoanThoiGian === 'number' && !isNaN(duDoanThoiGian)) ? duDoanThoiGian : null, 
-            
-            isRaining // $9
+            mucNuocA,
+            mucNuocB,
+            luuLuong,
+            trangThaiSimulator,
+            thongBaoSimulator,
+            duDoanTrangThai,
+            formatCountdown(typeof time_until_a_danger_simulator === 'number' ? time_until_a_danger_simulator : duDoanThoiGian),
+            (typeof duDoanThoiGian === 'number' && !isNaN(duDoanThoiGian)) ? duDoanThoiGian : null,
+            isRaining
         ];
 
-        // Tạo mảng tác vụ
         const dbTasks = [];
         const logMsg = `[DB Save]: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}`;
-        let savedRecord = null; 
+        let savedRecord = null;
 
-        // Tác vụ 1: Lưu vào CSDL Chính (Local hoặc Cloud)
         if (pool) {
             dbTasks.push(
                 pool.query(sql, values)
@@ -367,8 +359,7 @@ app.post('/update', async (req, res) => {
             );
         }
 
-        // Tác vụ 2: Lưu vào CSDL Cloud (CHỈ KHI CHẠY LOCAL)
-        if (railwayPool) { // railwayPool chỉ tồn tại khi chạy local
+        if (railwayPool) {
             dbTasks.push(
                 railwayPool.query(sql, values)
                     .then(() => console.log(`[✓] [Sync->Cloud] ${logMsg}`))
@@ -376,7 +367,6 @@ app.post('/update', async (req, res) => {
             );
         }
 
-        // Đợi cả hai CSDL lưu xong
         await Promise.all(dbTasks);
 
         // 8. Cập nhật trạng thái
@@ -444,7 +434,6 @@ app.get('/api/history_by_date', async (req, res) => {
         if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
             return res.status(400).json({ error: 'Thiếu hoặc sai định dạng tham số ngày (YYYY-MM-DD)' });
         }
-        // (SỬA LỖI TIMEZONE - ĐÃ SỬA)
         const sql = `SELECT * FROM sensor_data WHERE (created_at AT TIME ZONE '+07')::date = $1 ORDER BY id DESC;`;
         const result = await pool.query(sql, [date]);
         res.json(result.rows || []);
@@ -454,7 +443,11 @@ app.get('/api/history_by_date', async (req, res) => {
     }
 });
 
-// (Xóa các API thừa của file index.js cũ: /upload, /admin/force_sync)
+// API /upload (Giữ lại từ file index.js)
+app.post('/upload', upload.single('file'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file' });
+    res.json({ filename: req.file.filename, originalname: req.file.originalname });
+});
 
 // --------------- START SERVER ----------------
 app.listen(SERVER_PORT, () => {
