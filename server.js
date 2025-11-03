@@ -21,9 +21,20 @@ const admin = require('firebase-admin');
 
 // --------------- DEBUG ENV ----------------
 console.log("--- BẮT ĐẦU DEBUG BIẾN MÔI TRƯỜNG ---");
-console.log("SERVICE_ACCOUNT_JSON:", process.env.SERVICE_ACCOUNT_JSON ? "✅ TỒN TẠI" : "❌ KHÔNG TỒN TẠI");
-console.log("DATABASE_URL:", process.env.DATABASE_URL ? "✅ TỒN TẠI" : "❌ KHÔNG TỒN TẠI");
-console.log("RAILWAY_DB_URL:", process.env.RAILWAY_DB_URL ? "✅ TỒN TẠI" : "⚠️ KHÔNG TỒN TẠI");
+console.log("RAILWAY_DB_URL:", process.env.RAILWAY_DB_URL ? "✅ TỒN TẠI" : "❌ KHÔNG TỒN TẠI");
+console.log("PYTHON_SERVER_URL:", process.env.PYTHON_SERVER_URL ? "✅ TỒN TẠI" : "❌ KHÔNG TỒN TẠI");
+console.log("DB_USER:", process.env.DB_USER ? "✅ TỒN TẠI" : "❌ KHÔNG TỒN TẠI");
+
+// Debug chi tiết RAILWAY_DB_URL
+if (process.env.RAILWAY_DB_URL) {
+  try {
+    const dbUrl = new URL(process.env.RAILWAY_DB_URL);
+    console.log("📝 RAILWAY_DB_URL host:", dbUrl.hostname);
+    console.log("📝 RAILWAY_DB_URL port:", dbUrl.port);
+  } catch (e) {
+    console.log("❌ RAILWAY_DB_URL format error");
+  }
+}
 console.log("--- KẾT THÚC DEBUG ---");
 
 // --------------- CONFIG --------------------
@@ -36,55 +47,67 @@ let pool;
 let railwayPool;
 
 try {
-    if (process.env.DATABASE_URL) {
-        console.log("✅ [DB Config] Đang kết nối CSDL Cloud (sử dụng DATABASE_URL)...");
+    // ƯU TIÊN: Kết nối đến Railway DB (Cloud) qua RAILWAY_DB_URL
+    if (process.env.RAILWAY_DB_URL) {
+        console.log("✅ [DB Config] Đang kết nối CSDL Cloud (sử dụng RAILWAY_DB_URL)...");
+        
         pool = new Pool({
-            connectionString: process.env.DATABASE_URL,
-            ssl: { rejectUnauthorized: false }
+            connectionString: process.env.RAILWAY_DB_URL,
+            ssl: { rejectUnauthorized: false },
+            connectionTimeoutMillis: 10000,
+            idleTimeoutMillis: 30000,
         });
+        
+        // Test connection
+        pool.query('SELECT NOW()')
+            .then(result => console.log('✅ Database connection test successful:', result.rows[0].now))
+            .catch(err => {
+                console.error('❌ Database connection test failed:', err.message);
+                console.log('🔄 Thử kết nối CSDL Local...');
+                connectToLocalDB();
+            });
+            
         railwayPool = null;
     } else {
-        console.log("⚠️ [DB Config] Đang kết nối CSDL Local...");
-        const DB_CONFIG = {
-            user: process.env.DB_USER || 'postgres',
-            host: process.env.DB_HOST || 'localhost',
-            database: process.env.DB_NAME || 'flood_alert_db',
-            password: process.env.DB_PASS || 'Quan@',
-            port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432,
-        };
-        pool = new Pool(DB_CONFIG);
-
-        if (process.env.RAILWAY_DB_URL) {
-            railwayPool = new Pool({
-                connectionString: process.env.RAILWAY_DB_URL,
-                ssl: { rejectUnauthorized: false }
-            });
-            console.log("✅ [DB Sync] Đã kết nối CSDL Cloud (Railway) để sẵn sàng đồng bộ.");
-        } else {
-            console.warn("⚠️ [DB Sync] Không tìm thấy RAILWAY_DB_URL trong .env, sẽ chỉ lưu vào Local.");
-            railwayPool = null;
-        }
+        connectToLocalDB();
     }
 } catch (dbErr) {
     console.error("❌ LỖI KHI KHỞI TẠO CSDL POOL:", dbErr.message);
-    pool = null;
+    connectToLocalDB();
+}
+
+// Hàm kết nối CSDL Local
+function connectToLocalDB() {
+    console.log("⚠️ [DB Config] Đang kết nối CSDL Local...");
+    const DB_CONFIG = {
+        user: process.env.DB_USER || 'postgres',
+        host: process.env.DB_HOST || 'localhost',
+        database: process.env.DB_NAME || 'flood_alert_db',
+        password: process.env.DB_PASS || 'Quan@',
+        port: process.env.DB_PORT ? parseInt(process.env.DB_PORT, 10) : 5432,
+    };
+    
+    try {
+        pool = new Pool(DB_CONFIG);
+        console.log("✅ Kết nối CSDL Local thành công");
+    } catch (err) {
+        console.error("❌ Lỗi kết nối CSDL Local:", err.message);
+        pool = null;
+    }
 }
 
 // --------------- FIREBASE ADMIN -------------
 try {
-    if (process.env.SERVICE_ACCOUNT_JSON) {
-        console.log("✅ [Firebase] Khởi tạo từ SERVICE_ACCOUNT_JSON (env)");
-        const serviceAccount = JSON.parse(process.env.SERVICE_ACCOUNT_JSON);
+    // Ưu tiên file local trước
+    const localServicePath = path.join(__dirname, 'serviceAccountKey.json');
+    if (fs.existsSync(localServicePath)) {
+        console.log("✅ [Firebase] Khởi tạo từ file 'serviceAccountKey.json' (Local)");
+        const serviceAccount = require(localServicePath);
         admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+        console.log("✅ Firebase Admin initialized from local file");
     } else {
-        const localServicePath = path.join(__dirname, 'serviceAccountKey.json');
-        if (fs.existsSync(localServicePath)) {
-            console.log("⚠️ [Firebase] Khởi tạo từ file 'serviceAccountKey.json' (Local)");
-            const serviceAccount = require(localServicePath);
-            admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
-        } else {
-            console.warn("⚠️ Firebase Admin chưa được khởi tạo: không tìm thấy SERVICE_ACCOUNT_JSON và serviceAccountKey.json.");
-        }
+        console.warn("⚠️ Không tìm thấy file serviceAccountKey.json");
+        console.warn("📱 Push notification sẽ không hoạt động cho đến khi có Firebase configuration");
     }
 } catch (error) {
     console.error("❌ LỖI KHI KHỞI TẠO FIREBASE ADMIN:", error.message);
@@ -214,7 +237,10 @@ async function sendRapidRiseNotification(rate) {
 
 // --------------- DB INIT -------------------
 async function ensureTables() {
-    if (!pool) return;
+    if (!pool) {
+        console.log("❌ Không có database pool, bỏ qua tạo bảng");
+        return;
+    }
     
     const createSql = `
     CREATE TABLE IF NOT EXISTS sensor_data (
@@ -234,22 +260,39 @@ async function ensureTables() {
     
     try {
         await pool.query(createSql);
-        console.log("✅ Bảng sensor_data (Local) sẵn sàng.");
-        
-        if (railwayPool) {
-            await railwayPool.query(createSql);
-            console.log("✅ Bảng sensor_data (Cloud Sync) sẵn sàng.");
-        }
+        console.log("✅ Bảng sensor_data sẵn sàng.");
     } catch (err) {
         console.error("❌ Lỗi tạo bảng sensor_data:", err.message);
     }
 }
 
-ensureTables().catch(e => console.error(e));
+// Đợi một chút trước khi tạo bảng để đảm bảo kết nối database đã sẵn sàng
+setTimeout(() => {
+    ensureTables().catch(e => console.error("Lỗi ensureTables:", e));
+}, 2000);
 
 // --------------- ROUTES ---------------------
 app.get('/', (req, res) => {
-    res.send({ status: 'OK', now: new Date().toISOString() });
+    res.send({ 
+        status: 'OK', 
+        now: new Date().toISOString(),
+        database: pool ? 'Connected' : 'Disconnected',
+        firebase: admin.apps.length > 0 ? 'Initialized' : 'Not initialized',
+        environment: process.env.RAILWAY_DB_URL ? 'Cloud' : 'Local'
+    });
+});
+
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'OK',
+        timestamp: new Date().toISOString(),
+        services: {
+            database: pool ? 'connected' : 'disconnected',
+            firebase: admin.apps.length > 0 ? 'initialized' : 'not_initialized',
+            python_ai: PYTHON_SERVER_URL,
+            environment: process.env.RAILWAY_DB_URL ? 'cloud' : 'local'
+        }
+    });
 });
 
 app.post('/api/register_fcm_token', (req, res) => {
@@ -325,7 +368,7 @@ app.post('/update', async (req, res) => {
         }
 
         // Gọi AI
-        if (!process.env.DATABASE_URL || process.env.CLOUD_AI === 'true') {
+        if (!process.env.RAILWAY_DB_URL || process.env.CLOUD_AI === 'true') {
             try {
                 const ai_payload = { 
                     mucNuocA, 
@@ -383,28 +426,15 @@ app.post('/update', async (req, res) => {
             isRaining
         ];
 
-        const dbTasks = [];
-        const logMsg = `[DB Save]: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}`;
-
         if (pool) {
-            dbTasks.push(
-                pool.query(sql, values)
-                    .then(() => {
-                        console.log(`[✓] ${process.env.DATABASE_URL ? '[Cloud]' : '[Local]'} ${logMsg}`);
-                    })
-                    .catch(err => console.error(`❌ Lỗi ${process.env.DATABASE_URL ? '[Cloud]' : '[Local]'} DB Save:`, err.message))
-            );
+            try {
+                await pool.query(sql, values);
+                console.log(`[✓] DB Save: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}`);
+            } catch (dbErr) {
+                console.error(`❌ Lỗi DB Save:`, dbErr.message);
+            }
         }
 
-        if (railwayPool) {
-            dbTasks.push(
-                railwayPool.query(sql, values)
-                    .then(() => console.log(`[✓] [Sync->Cloud] ${logMsg}`))
-                    .catch(err => console.error("❌ Lỗi [Sync->Cloud] DB Save:", err.message))
-            );
-        }
-
-        await Promise.all(dbTasks);
         appState.lastSensorData = currentSensorData;
 
         res.status(200).json({
@@ -499,4 +529,5 @@ app.listen(SERVER_PORT, () => {
     console.log(`🚀 Server Node.js đang chạy tại cổng: ${SERVER_PORT}`);
     console.log(`🧠 Kết nối tới AI Python: ${PYTHON_SERVER_URL}`);
     console.log("📱 Sẵn sàng nhận FCM token từ client.");
+    console.log(`🌐 Môi trường: ${process.env.RAILWAY_DB_URL ? 'CLOUD' : 'LOCAL'}`);
 });
