@@ -1,7 +1,7 @@
-# Chặn thư viện (rất nặng)
+# Chặn thư viện
 node_modules/
 
-# Chặn file bí mật (CỰC KỲ QUAN TRỌNG)
+# Chặn file bí mật
 .env
 serviceAccountKey.json
 
@@ -9,10 +9,6 @@ serviceAccountKey.json
 *.py
 *.pkl
 fake_sensor.js
-
-# === CHẶN DATA LOGS (nếu có) ===
-data_logs/
-*.csv
 
 # Chặn môi trường ảo Python
 /venv/

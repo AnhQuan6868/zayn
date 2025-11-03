@@ -37,18 +37,21 @@ const RAPID_RISE_THRESHOLD = 0.5; // cm/giây
 // =============================
 // KHỞI TẠO CSDL (DATABASE)
 // =============================
-let pool;
-let railwayPool;
+let pool; // Đây là CSDL chính (Local hoặc Cloud)
+let railwayPool; // Đây là CSDL Cloud (dùng cho trạm trung chuyển)
 
 try {
     if (process.env.DATABASE_URL) {
+        // MÔI TRƯỜNG CLOUD (RAILWAY)
         console.log("✅ [DB Config] Đang kết nối CSDL Cloud (sử dụng DATABASE_URL)...");
         pool = new Pool({
             connectionString: process.env.DATABASE_URL,
             ssl: { rejectUnauthorized: false }
         });
-        railwayPool = null;
+        railwayPool = null; // (Trên Cloud, không cần trạm trung chuyển)
+
     } else {
+        // MÔI TRƯỜNG LOCAL (MÁY BẠN)
         console.log("⚠️ [DB Config] Đang kết nối CSDL Local (sử dụng DB_CONFIG)...");
         const DB_CONFIG = {
             user: process.env.DB_USER || 'postgres',
@@ -59,6 +62,7 @@ try {
         };
         pool = new Pool(DB_CONFIG);
 
+        // (CHỨC NĂNG TRẠM TRUNG CHUYỂN: Kết nối CSDL Cloud từ file .env)
         if (process.env.RAILWAY_DB_URL) {
             railwayPool = new Pool({
                 connectionString: process.env.RAILWAY_DB_URL,
@@ -126,7 +130,6 @@ function formatCountdown(seconds) {
     const remainingSeconds = Math.round(seconds % 60);
     return (minutes > 0) ? `${minutes} phút ${remainingSeconds} giây` : `${remainingSeconds} giây`;
 }
-
 function getNotificationTitle(status) {
     const titleMap = {
         "Bình thường": "✅ Tình hình ổn định", "Cảnh báo!": "⚠️ Cảnh báo Lũ",
@@ -134,7 +137,6 @@ function getNotificationTitle(status) {
     };
     return titleMap[status] || `Cảnh báo: ${status}`;
 }
-
 function getNotificationBody(status, countdown) {
     const baseMessages = {
         "Bình thường": "Tình hình lũ hiện tại ổn định. Tiếp tục theo dõi.",
@@ -150,7 +152,6 @@ function getNotificationBody(status, countdown) {
     }
     return body;
 }
-
 function shouldSendAIStatusNotification(lastStatus, currentStatus) {
     if (!appState.fcmToken) { console.log("📱 Chưa có FCM token, bỏ qua thông báo!"); return false; }
     if (lastStatus !== currentStatus) { console.log(`🔄 Thay đổi trạng thái AI: ${lastStatus} -> ${currentStatus}`); return true; }
@@ -179,12 +180,10 @@ async function sendPushNotificationInternal(title, body) {
         return false;
     }
 }
-
 async function sendAIStatusNotification(status, countdown) {
     const title = getNotificationTitle(status); const body = getNotificationBody(status, countdown);
     console.log(`📤 Chuẩn bị gửi thông báo AI: ${status}`); await sendPushNotificationInternal(title, body);
 }
-
 async function sendRapidRiseNotification(rate) {
     const title = "🌊 Cảnh báo: Nước Dâng Nhanh!"; const body = `Phát hiện mực nước B đang dâng nhanh (${rate.toFixed(1)} cm/s).`;
     console.log(`📤 Chuẩn bị gửi thông báo dâng nhanh`); await sendPushNotificationInternal(title, body);
@@ -216,6 +215,7 @@ async function ensureTables() {
     try {
         await pool.query(createSql);
         console.log(`✅ Bảng sensor_data (${process.env.DATABASE_URL ? 'Cloud' : 'Local'}) sẵn sàng.`);
+        // Đảm bảo bảng CSDL Cloud cũng tồn tại
         if (railwayPool) {
             await railwayPool.query(createSql);
             console.log("✅ Bảng sensor_data (Cloud Sync) sẵn sàng.");
@@ -224,7 +224,7 @@ async function ensureTables() {
         console.error("❌ Lỗi tạo bảng sensor_data:", err && err.message ? err.message : err);
     }
 }
-ensureTables().catch(e=>console.error(e));
+ensureTables().catch(e=>console.error(e)); // Chạy khi khởi động
 
 // =============================
 // API ENDPOINTS
