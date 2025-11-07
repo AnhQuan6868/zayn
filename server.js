@@ -313,7 +313,6 @@ app.post('/api/register_fcm_token', async (req, res) => {
         if (!token) return res.status(400).json({ error: 'Missing token' });
 
         if (pool) { // 'pool' ở đây là CSDL Cloud (nếu chạy trên Railway)
-            // (NÂNG CẤP: Không XÓA, chỉ THÊM MỚI, bỏ qua nếu đã tồn tại)
             const sql = "INSERT INTO fcm_tokens (token) VALUES ($1) ON CONFLICT (token) DO NOTHING;";
             await pool.query(sql, [token]);
             console.log(`✅ [FCM Mailbox] Đã LƯU/CẬP NHẬT token vào CSDL Cloud: ${token.substring(0,10)}...`);
@@ -413,22 +412,19 @@ app.post('/update', async (req, res) => {
         }
 
         // ==========================================
-        // === 7. LƯU DỮ LIỆU VÀO DB (Gửi 2 nơi) ===
+        // === 7. LƯU DỮ LIỆU VÀO DB (Gửi 2 nơi)
         // ==========================================
         const sql = `INSERT INTO sensor_data 
             (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
             VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id, created_at`;
 
-        // (ĐÂY LÀ PHIÊN BẢN ĐÃ SỬA LỖI TRÁO NGƯỢC)
         const values = [
             mucNuocA, mucNuocB, luuLuong,
             trangThaiSimulator, thongBaoSimulator,
             duDoanTrangThai,
-            // $7 (CHỮ)
             formatCountdown(typeof time_until_a_danger_simulator === 'number' ? time_until_a_danger_simulator : duDoanThoiGian),
-            // $8 (SỐ)
             (typeof duDoanThoiGian === 'number' && !isNaN(duDoanThoiGian)) ? duDoanThoiGian : null,
-            isRaining // $9
+            isRaining
         ];
 
         const dbTasks = [];
@@ -520,7 +516,6 @@ app.get('/api/history_by_date', async (req, res) => {
         if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
             return res.status(400).json({ error: 'Thiếu hoặc sai định dạng tham số ngày (YYYY-MM-DD)' });
         }
-        // (ĐÃ SỬA LỖI TIMEZONE)
         const sql = `SELECT * FROM sensor_data WHERE (created_at AT TIME ZONE '+07')::date = $1 ORDER BY id DESC;`;
         const result = await pool.query(sql, [date]);
         res.json(result.rows || []);
@@ -548,4 +543,4 @@ app.listen(SERVER_PORT, () => {
         syncTokenFromCloudDB(); // Chạy 1 lần ngay
         setInterval(syncTokenFromCloudDB, TOKEN_SYNC_INTERVAL); // Chạy lặp lại
     }
-});
+}); 
