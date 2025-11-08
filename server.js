@@ -32,7 +32,9 @@ const fs = require('fs');
 // =============================
 const SERVER_PORT = process.env.PORT || 3000;
 const PYTHON_SERVER_URL = process.env.PYTHON_SERVER_URL || "http://localhost:5001";
-const RAPID_RISE_THRESHOLD = 0.5; // cm/giây
+const RAPID_RISE_THRESHOLD = 0.3; // cm/giây - GIẢM NGƯỠNG XUỐNG 0.3
+const ABSOLUTE_RISE_THRESHOLD = 3; // cm - THÊM NGƯỠNG TĂNG TUYỆT ĐỐI (GIẢM XUỐNG 3cm)
+const HIGH_WATER_LEVEL_THRESHOLD = 12; // cm - THÊM NGƯỠNG MỰC NƯỚC CAO
 const TOKEN_SYNC_INTERVAL = 30000; // 30 giây
 
 // =============================
@@ -107,12 +109,15 @@ try {
 // TRẠNG THÁI MÁY CHỦ (State)
 // =============================
 const appState = {
-    fcmTokens: [], // (NÂNG CẤP: Lưu nhiều token)
+    fcmTokens: [],
     lastSensorData: { mucNuocB: null, luuLuong: null, timestamp: null },
     lastSentAIStatus: "Bình thường",
     sentRapidRiseNotification: false,
-    rapidRiseNotificationTime: null, // THÊM DÒNG NÀY - thời điểm gửi cảnh báo cuối
-    lastDangerAlertTime: null
+    rapidRiseNotificationTime: null,
+    lastAbsoluteRiseAlert: { value: null, time: null },
+    lastHighWaterAlert: { value: null, time: null }, // THÊM: Cảnh báo mực nước cao
+    lastDangerAlertTime: null,
+    b_total_rise_start: null // THÊM: Theo dõi tổng mức tăng từ đầu
 };
 
 // =============================
@@ -164,7 +169,7 @@ function shouldSendAIStatusNotification(lastStatus, currentStatus) {
 }
 
 // =============================
-// HÀM GỬI THÔNG BÁO PUSH (NÂNG CẤP: Gửi Nhiều Máy)
+// HÀM GỬI THÔNG BÁO PUSH
 // =============================
 async function sendPushNotificationInternal(title, body) {
     if (!admin.apps.length) { console.error("❌ Firebase Admin chưa khởi tạo."); return false; }
@@ -175,7 +180,7 @@ async function sendPushNotificationInternal(title, body) {
     
     const message = {
         notification: { title: title, body: body }, 
-        tokens: appState.fcmTokens, // Gửi đến toàn bộ danh sách
+        tokens: appState.fcmTokens,
         android: { priority: 'high', notification: { sound: 'default', channelId: 'FloodWarningChannel', icon: 'ic_warning', color: '#FF0000' } },
         apns: { headers: { 'apns-priority': '10' }, payload: { aps: { sound: 'default', alert: { title: title, body: body } } } }
     };
@@ -219,8 +224,20 @@ async function sendAIStatusNotification(status, countdown) {
     console.log(`📤 Chuẩn bị gửi thông báo AI: ${status}`); await sendPushNotificationInternal(title, body);
 }
 async function sendRapidRiseNotification(rate) {
-    const title = "🌊 Cảnh báo: Nước Dâng Nhanh!"; const body = `Phát hiện mực nước B đang dâng nhanh (${rate.toFixed(1)} cm/s).`;
+    const title = "🌊 Cảnh báo: Nước Dâng Nhanh!"; 
+    const body = `Phát hiện mực nước B đang dâng nhanh (${rate.toFixed(1)} cm/s). Cần theo dõi chặt chẽ!`;
     console.log(`📤 Chuẩn bị gửi thông báo dâng nhanh`); await sendPushNotificationInternal(title, body);
+}
+async function sendAbsoluteRiseNotification(absoluteRise) {
+    const title = "📈 Cảnh báo: Mực nước Tăng Mạnh!"; 
+    const body = `Mực nước B đã tăng ${absoluteRise.toFixed(1)} cm so với lần trước. Cần cảnh giác!`;
+    console.log(`📤 Chuẩn bị gửi thông báo tăng mạnh`); await sendPushNotificationInternal(title, body);
+}
+// THÊM HÀM MỚI: Cảnh báo mực nước cao
+async function sendHighWaterNotification(waterLevel) {
+    const title = "💧 Cảnh báo: Mực nước Cao!"; 
+    const body = `Mực nước B đang ở mức ${waterLevel.toFixed(1)} cm. Cần theo dõi sát sao!`;
+    console.log(`📤 Chuẩn bị gửi thông báo mực nước cao`); await sendPushNotificationInternal(title, body);
 }
 
 // =============================
@@ -334,6 +351,7 @@ app.post('/update', async (req, res) => {
     let duDoanThoiGian = -1;
     let b_rate_of_change = 0;
     let flow_rate_of_change = 0;
+    let b_absolute_change = 0; // THÊM: Biến mới cho thay đổi tuyệt đối
     let currentTime;
     
     try {
@@ -352,73 +370,137 @@ app.post('/update', async (req, res) => {
 
         currentTime = Date.now();
 
-        // 2. Tính tốc độ thay đổi
-        if (appState.lastSensorData.timestamp !== null) {
+        // 2. Tính tốc độ thay đổi và mức tăng tuyệt đối
+        let absoluteRise = 0;
+        if (appState.lastSensorData.timestamp !== null && appState.lastSensorData.mucNuocB !== null) {
             const timeDiffSeconds = (currentTime - appState.lastSensorData.timestamp) / 1000;
             if (timeDiffSeconds > 0) {
-                const lastB = appState.lastSensorData.mucNuocB !== null ? appState.lastSensorData.mucNuocB : mucNuocB;
+                const lastB = appState.lastSensorData.mucNuocB;
                 const lastFlow = appState.lastSensorData.luuLuong !== null ? appState.lastSensorData.luuLuong : luuLuong;
                 b_rate_of_change = (mucNuocB - lastB) / timeDiffSeconds;
                 flow_rate_of_change = (luuLuong - lastFlow) / timeDiffSeconds;
+                absoluteRise = mucNuocB - lastB;
+                b_absolute_change = absoluteRise; // Gán cho biến mới
             }
         }
+
+        // KHỞI TẠO TỔNG MỨC TĂNG NẾU CHƯA CÓ
+        if (appState.b_total_rise_start === null) {
+            appState.b_total_rise_start = mucNuocB;
+            console.log(`📊 Khởi tạo tổng mức tăng từ: ${mucNuocB} cm`);
+        }
+        const b_total_rise = mucNuocB - appState.b_total_rise_start;
+
         const currentSensorData = { mucNuocB, luuLuong, timestamp: currentTime };
 
-        // 3. Cảnh báo dâng nhanh (CHẠY TRÊN CẢ LOCAL VÀ CLOUD)
-        console.log(`📊 [DEBUG] Tốc độ dâng nước B: ${b_rate_of_change.toFixed(3)} cm/s, Ngưỡng: ${RAPID_RISE_THRESHOLD}, Đã gửi: ${appState.sentRapidRiseNotification}, Thời điểm gửi cuối: ${appState.rapidRiseNotificationTime}`);
+        // 3. CẢNH BÁO THÔNG MINH - 3 MỨC ĐỘ
+        console.log(`📊 [DEBUG] Tốc độ dâng: ${b_rate_of_change.toFixed(3)} cm/s, Tăng tuyệt đối: ${absoluteRise.toFixed(1)} cm, Mực nước B: ${mucNuocB} cm, Tổng tăng: ${b_total_rise.toFixed(1)} cm`);
 
         const now = Date.now();
         
-        // 🚨 GỬI CẢNH BÁO KHI PHÁT HIỆN NƯỚC DÂNG NHANH
+        // 🚨 CẢNH BÁO TỐC ĐỘ DÂNG NHANH
         if (b_rate_of_change > RAPID_RISE_THRESHOLD) {
             const canSendAgain = !appState.rapidRiseNotificationTime || 
                 (now - appState.rapidRiseNotificationTime) > (10 * 60 * 1000); // 10 phút cooldown
             
             if (!appState.sentRapidRiseNotification || canSendAgain) {
-                console.warn(`🌊 NƯỚC DÂNG NHANH! Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s (Vượt ngưỡng ${RAPID_RISE_THRESHOLD} cm/s)`);
+                console.warn(`🌊 NƯỚC DÂNG NHANH! Tốc độ: ${b_rate_of_change.toFixed(2)} cm/s (Vượt ngưỡng ${RAPID_RISE_THRESHOLD} cm/s)`);
                 await sendRapidRiseNotification(b_rate_of_change);
                 appState.sentRapidRiseNotification = true;
                 appState.rapidRiseNotificationTime = now;
                 console.log("✅ ĐÃ GỬI CẢNH BÁO DÂNG NHANH");
-            } else {
-                const timeSinceLastAlert = Math.round((now - appState.rapidRiseNotificationTime) / 1000);
-                console.log(`⏳ Đã gửi cảnh báo ${timeSinceLastAlert} giây trước, chờ hết cooldown 10 phút`);
             }
         } 
-        // 🔄 RESET KHI TỐC ĐỘ GIẢM XUỐNG
-        else if (b_rate_of_change <= RAPID_RISE_THRESHOLD * 0.3) {
+        
+        // 📈 CẢNH BÁO TĂNG TUYỆT ĐỐI MẠNH
+        if (absoluteRise > ABSOLUTE_RISE_THRESHOLD) {
+            const canSendAbsoluteAlert = !appState.lastAbsoluteRiseAlert.time || 
+                (now - appState.lastAbsoluteRiseAlert.time) > (15 * 60 * 1000) || // 15 phút cooldown
+                Math.abs(absoluteRise - appState.lastAbsoluteRiseAlert.value) > 2; // Hoặc tăng khác biệt > 2cm
+            
+            if (canSendAbsoluteAlert) {
+                console.warn(`📈 MỰC NƯỚC TĂNG MẠNH! Tăng: ${absoluteRise.toFixed(1)} cm (Vượt ngưỡng ${ABSOLUTE_RISE_THRESHOLD} cm)`);
+                await sendAbsoluteRiseNotification(absoluteRise);
+                appState.lastAbsoluteRiseAlert = { value: absoluteRise, time: now };
+                console.log("✅ ĐÃ GỬI CẢNH BÁO TĂNG MẠNH");
+            }
+        }
+
+        // 💧 CẢNH BÁO MỰC NƯỚC CAO
+        if (mucNuocB > HIGH_WATER_LEVEL_THRESHOLD) {
+            const canSendHighWaterAlert = !appState.lastHighWaterAlert.time || 
+                (now - appState.lastHighWaterAlert.time) > (20 * 60 * 1000) || // 20 phút cooldown
+                Math.abs(mucNuocB - appState.lastHighWaterAlert.value) > 3; // Hoặc thay đổi > 3cm
+            
+            if (canSendHighWaterAlert) {
+                console.warn(`💧 MỰC NƯỚC CAO! Mực nước B: ${mucNuocB} cm (Vượt ngưỡng ${HIGH_WATER_LEVEL_THRESHOLD} cm)`);
+                await sendHighWaterNotification(mucNuocB);
+                appState.lastHighWaterAlert = { value: mucNuocB, time: now };
+                console.log("✅ ĐÃ GỬI CẢNH BÁO MỰC NƯỚC CAO");
+            }
+        }
+        
+        // 🔄 RESET KHI TỐC ĐỘ GIẢM
+        if (b_rate_of_change <= RAPID_RISE_THRESHOLD * 0.3) {
             if (appState.sentRapidRiseNotification) {
                 console.info("💧 Tốc độ dâng nước đã giảm, cho phép gửi cảnh báo mới khi cần");
                 appState.sentRapidRiseNotification = false;
             }
         }
 
-        // 4. Gọi AI (CHỈ KHI CHẠY LOCAL)
+        // 4. Gọi AI NÂNG CAO (CHỈ KHI CHẠY LOCAL)
         if (!process.env.DATABASE_URL) {
             try {
+                // TÍNH TOÁN CÁC FEATURES NÂNG CAO CHO AI MỚI
+                const ab_diff = mucNuocB - mucNuocA;
+                const ab_ratio = mucNuocB / (mucNuocA + 0.001); // Tránh chia cho 0
+                const danger_index = (mucNuocB * 0.3) + (Math.abs(b_rate_of_change) * 2.0) + (Math.abs(b_absolute_change) * 0.5) + (ab_diff * 0.2);
+                const b_trend = mucNuocB; // Đơn giản, có thể cải tiến sau
+
                 const ai_payload = { 
-                    mucNuocA, mucNuocB, luuLuong, is_raining_now: isRaining ? 1 : 0, 
-                    b_rate_of_change, flow_rate_of_change, ab_diff: mucNuocB - mucNuocA 
+                    mucNuocA, mucNuocB, luuLuong, 
+                    is_raining_now: isRaining ? 1 : 0, 
+                    b_rate_of_change, 
+                    flow_rate_of_change, 
+                    ab_diff,
+                    ab_ratio,
+                    b_absolute_change,
+                    b_total_rise,
+                    danger_index,
+                    b_trend
                 };
+
+                console.log(`🧠 [AI Enhanced] Gửi 12 features đến AI...`);
+                
                 const [statusRes, timeRes] = await Promise.all([
-                    axios.post(`${PYTHON_SERVER_URL}/predict`, ai_payload, { timeout: 6000 }),
-                    axios.post(`${PYTHON_SERVER_URL}/predict_time`, ai_payload, { timeout: 6000 })
+                    axios.post(`${PYTHON_SERVER_URL}/predict`, ai_payload, { timeout: 8000 }),
+                    axios.post(`${PYTHON_SERVER_URL}/predict_time`, ai_payload, { timeout: 8000 })
                 ]);
+                
                 duDoanTrangThai = statusRes?.data?.prediction || duDoanTrangThai;
                 duDoanThoiGian = parseFloat(timeRes?.data?.predicted_seconds) || -1;
-                console.log(`[🧠 AI Status]: ${duDoanTrangThai}, Countdown: ${duDoanThoiGian >= 0 ? duDoanThoiGian.toFixed(2) + 's' : 'N/A'}`);
+                
+                // HIỂN THỊ PHÂN TÍCH NGUY HIỂM CHI TIẾT
+                const dangerAnalysis = statusRes?.data?.danger_analysis;
+                if (dangerAnalysis) {
+                    console.log(`🔍 [AI Analysis] Mực nước: ${dangerAnalysis.mucnuocb_level}, Tốc độ: ${dangerAnalysis.rate_of_change_level}, Thay đổi: ${dangerAnalysis.absolute_change_level}, Chỉ số: ${dangerAnalysis.danger_index.toFixed(1)}`);
+                }
+                
+                console.log(`[🧠 AI Enhanced Status]: ${duDoanTrangThai}, Countdown: ${duDoanThoiGian >= 0 ? duDoanThoiGian.toFixed(2) + 's' : 'N/A'}`);
             } catch (ai_err) {
-                console.error("❌ Lỗi gọi API dự đoán (Python):", ai_err && ai_err.message ? ai_err.message : ai_err);
+                console.error("❌ Lỗi gọi API dự đoán NÂNG CAO (Python):", ai_err && ai_err.message ? ai_err.message : ai_err);
             }
         }
 
-        // 5. Gửi thông báo (CHỈ KHI CHẠY LOCAL)
+        // 5. Gửi thông báo AI (CHỈ KHI CHẠY LOCAL)
         if (!process.env.DATABASE_URL) {
             if (shouldSendAIStatusNotification(appState.lastSentAIStatus, duDoanTrangThai)) {
                 await sendAIStatusNotification(duDoanTrangThai, duDoanThoiGian);
                 appState.lastSentAIStatus = duDoanTrangThai;
                 if (duDoanTrangThai !== "Nguy hiểm!") appState.lastDangerAlertTime = null;
             }
+            
+            // CẢNH BÁO NGUY HIỂM ĐỊNH KỲ
             if (duDoanTrangThai === "Nguy hiểm!" && appState.fcmTokens.length > 0) {
                 const now = Date.now();
                 if (!appState.lastDangerAlertTime || (now - appState.lastDangerAlertTime) > 2 * 60 * 1000) {
@@ -476,7 +558,12 @@ app.post('/update', async (req, res) => {
         res.status(200).json({
             message: 'Đã lưu và dự đoán thành công.',
             prediction_status: duDoanTrangThai,
-            prediction_time: duDoanThoiGian
+            prediction_time: duDoanThoiGian,
+            alerts_sent: {
+                rapid_rise: appState.sentRapidRiseNotification,
+                absolute_rise: appState.lastAbsoluteRiseAlert.value !== null,
+                high_water: appState.lastHighWaterAlert.value !== null
+            }
         });
 
     } catch (err) {
@@ -551,9 +638,13 @@ app.post('/upload', upload.single('file'), (req, res) => {
 
 // --------------- START SERVER ----------------
 app.listen(SERVER_PORT, () => {
-    console.log(`🚀 Server Node.js đang chạy tại cổng: ${SERVER_PORT}`);
-    console.log(`🧠 Kết nối tới AI Python: ${PYTHON_SERVER_URL}`);
+    console.log(`🚀 Server Node.js NÂNG CAO đang chạy tại cổng: ${SERVER_PORT}`);
+    console.log(`🧠 Kết nối tới AI Python NÂNG CAO: ${PYTHON_SERVER_URL}`);
     console.log("📱 Sẵn sàng nhận FCM token từ client.");
+    console.log("🎯 Hệ thống cảnh báo 3 cấp độ:");
+    console.log(`   🌊 Tốc độ dâng: > ${RAPID_RISE_THRESHOLD} cm/s`);
+    console.log(`   📈 Tăng tuyệt đối: > ${ABSOLUTE_RISE_THRESHOLD} cm`);
+    console.log(`   💧 Mực nước cao: > ${HIGH_WATER_LEVEL_THRESHOLD} cm`);
     
     // (CHỈ CHẠY TRÊN LOCAL: Bắt đầu đồng bộ token)
     if (railwayPool) {
