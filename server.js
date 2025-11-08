@@ -111,6 +111,7 @@ const appState = {
     lastSensorData: { mucNuocB: null, luuLuong: null, timestamp: null },
     lastSentAIStatus: "Bình thường",
     sentRapidRiseNotification: false,
+    rapidRiseNotificationTime: null, // THÊM DÒNG NÀY - thời điểm gửi cảnh báo cuối
     lastDangerAlertTime: null
 };
 
@@ -363,14 +364,31 @@ app.post('/update', async (req, res) => {
         }
         const currentSensorData = { mucNuocB, luuLuong, timestamp: currentTime };
 
-        // 3. Cảnh báo dâng nhanh (CHỈ KHI CHẠY LOCAL)
-        if (!process.env.DATABASE_URL) {
-            if (b_rate_of_change > RAPID_RISE_THRESHOLD && !appState.sentRapidRiseNotification) {
-                console.warn(`🌊 Nước dâng nhanh! Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s`);
+        // 3. Cảnh báo dâng nhanh (CHẠY TRÊN CẢ LOCAL VÀ CLOUD)
+        console.log(`📊 [DEBUG] Tốc độ dâng nước B: ${b_rate_of_change.toFixed(3)} cm/s, Ngưỡng: ${RAPID_RISE_THRESHOLD}, Đã gửi: ${appState.sentRapidRiseNotification}, Thời điểm gửi cuối: ${appState.rapidRiseNotificationTime}`);
+
+        const now = Date.now();
+        
+        // 🚨 GỬI CẢNH BÁO KHI PHÁT HIỆN NƯỚC DÂNG NHANH
+        if (b_rate_of_change > RAPID_RISE_THRESHOLD) {
+            const canSendAgain = !appState.rapidRiseNotificationTime || 
+                (now - appState.rapidRiseNotificationTime) > (10 * 60 * 1000); // 10 phút cooldown
+            
+            if (!appState.sentRapidRiseNotification || canSendAgain) {
+                console.warn(`🌊 NƯỚC DÂNG NHANH! Tốc độ B: ${b_rate_of_change.toFixed(2)} cm/s (Vượt ngưỡng ${RAPID_RISE_THRESHOLD} cm/s)`);
                 await sendRapidRiseNotification(b_rate_of_change);
                 appState.sentRapidRiseNotification = true;
-            } else if (b_rate_of_change <= 0 && appState.sentRapidRiseNotification) {
-                console.info("💧 Nước ngừng dâng nhanh.");
+                appState.rapidRiseNotificationTime = now;
+                console.log("✅ ĐÃ GỬI CẢNH BÁO DÂNG NHANH");
+            } else {
+                const timeSinceLastAlert = Math.round((now - appState.rapidRiseNotificationTime) / 1000);
+                console.log(`⏳ Đã gửi cảnh báo ${timeSinceLastAlert} giây trước, chờ hết cooldown 10 phút`);
+            }
+        } 
+        // 🔄 RESET KHI TỐC ĐỘ GIẢM XUỐNG
+        else if (b_rate_of_change <= RAPID_RISE_THRESHOLD * 0.3) {
+            if (appState.sentRapidRiseNotification) {
+                console.info("💧 Tốc độ dâng nước đã giảm, cho phép gửi cảnh báo mới khi cần");
                 appState.sentRapidRiseNotification = false;
             }
         }
@@ -543,4 +561,4 @@ app.listen(SERVER_PORT, () => {
         syncTokenFromCloudDB(); // Chạy 1 lần ngay
         setInterval(syncTokenFromCloudDB, TOKEN_SYNC_INTERVAL); // Chạy lặp lại
     }
-}); 
+});
