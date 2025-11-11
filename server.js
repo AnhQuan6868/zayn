@@ -202,13 +202,16 @@ async function sendPushNotificationInternal(title, body) {
                 }
             });
 
-            if (tokensToDelete.length > 0 && (railwayPool || pool)) {
+            if (tokensToDelete.length > 0) {
+                // Luôn xóa khỏi CSDL Cloud, dù đang ở Local hay Cloud
                 const db = railwayPool || pool; 
-                try {
-                    await db.query("DELETE FROM fcm_tokens WHERE token = ANY($1::text[])", [tokensToDelete]);
-                    console.log(`🗑️ Đã xóa ${tokensToDelete.length} token hỏng khỏi CSDL.`);
-                } catch (e) {
-                    console.error("❌ Lỗi khi xóa token hỏng:", e.message);
+                if (db) {
+                    try {
+                        await db.query("DELETE FROM fcm_tokens WHERE token = ANY($1::text[])", [tokensToDelete]);
+                        console.log(`🗑️ Đã xóa ${tokensToDelete.length} token hỏng khỏi CSDL Cloud.`);
+                    } catch (e) {
+                        console.error("❌ Lỗi khi xóa token hỏng khỏi CSDL Cloud:", e.message);
+                    }
                 }
             }
         }
@@ -271,19 +274,16 @@ async function ensureTables() {
     `;
 
     try {
+        // pool (có thể là Local hoặc Cloud)
         await pool.query(createSqlSensorData);
-        console.log(`✅ Bảng sensor_data (${process.env.DATABASE_URL ? 'Cloud' : 'Local'}) sẵn sàng.`);
+        await pool.query(createSqlFcm);
+        console.log(`✅ Bảng sensor_data & fcm_tokens (${process.env.DATABASE_URL ? 'Cloud' : 'Local'}) sẵn sàng.`);
         
-        if (process.env.DATABASE_URL) {
-            await pool.query(createSqlFcm);
-            console.log("✅ Bảng fcm_tokens (Cloud) sẵn sàng.");
-        }
-        
+        // railwayPool (chỉ có ở Local, trỏ đến Cloud)
         if (railwayPool) {
             await railwayPool.query(createSqlSensorData);
-            console.log("✅ Bảng sensor_data (Cloud Sync) sẵn sàng.");
             await railwayPool.query(createSqlFcm);
-            console.log("✅ Bảng fcm_tokens (Cloud Sync) sẵn sàng.");
+            console.log("✅ Bảng sensor_data & fcm_tokens (Cloud Sync) sẵn sàng.");
         }
     } catch (err) {
         console.error("❌ Lỗi tạo bảng:", err && err.message ? err.message : err);
@@ -324,21 +324,42 @@ app.get('/', (req, res) => {
     res.send({ status: 'OK', now: new Date().toISOString() });
 });
 
-// (API NÂNG CẤP: Dùng "Hộp thư" cho nhiều máy)
+// =================================================================
+// ✨ ĐIỀU CHỈNH 1: /api/register_fcm_token
+// Endpoint này luôn lưu token vào CSDL Cloud, bất kể nó được gọi ở
+// server Local hay server Cloud.
+// =================================================================
 app.post('/api/register_fcm_token', async (req, res) => {
     try {
         const { token } = req.body;
         if (!token) return res.status(400).json({ error: 'Missing token' });
 
-        if (pool) { // 'pool' ở đây là CSDL Cloud (nếu chạy trên Railway)
-            const sql = "INSERT INTO fcm_tokens (token) VALUES ($1) ON CONFLICT (token) DO NOTHING;";
-            await pool.query(sql, [token]);
-            console.log(`✅ [FCM Mailbox] Đã LƯU/CẬP NHẬT token vào CSDL Cloud: ${token.substring(0,10)}...`);
-            res.json({ message: 'Token saved to DB' });
-        } else {
-            console.error("❌ /api/register_fcm_token: Không thể lưu token, 'pool' chưa sẵn sàng.");
-            res.status(500).json({ error: 'Server DB error' });
+        // XÁC ĐỊNH DB ĐỂ LƯU TOKEN:
+        // - Ở Cloud (Railway), 'pool' là CSDL Cloud.
+        // - Ở Local, 'railwayPool' là CSDL Cloud.
+        // -> Luôn ưu tiên lưu vào Cloud.
+        const dbToSaveToken = railwayPool || pool; 
+
+        if (!dbToSaveToken) {
+            console.error("❌ /api/register_fcm_token: Không tìm thấy CSDL (Cloud/Sync) để lưu token.");
+            return res.status(500).json({ error: 'Server DB config error' });
         }
+
+        const sql = "INSERT INTO fcm_tokens (token) VALUES ($1) ON CONFLICT (token) DO NOTHING;";
+        await dbToSaveToken.query(sql, [token]);
+        
+        console.log(`✅ [FCM Mailbox] Đã LƯU/CẬP NHẬT token vào CSDL Cloud: ${token.substring(0,10)}...`);
+        
+        // (Chỉ ở Local) Nếu đang ở Local và vừa lưu thành công,
+        // cập nhật ngay appState mà không cần chờ chu kỳ sync
+        if (railwayPool) { // railwayPool chỉ tồn tại ở Local
+            if (!appState.fcmTokens.includes(token)) {
+                appState.fcmTokens.push(token);
+                console.log("🔄 [FCM Mailbox] (Local) Cập nhật token mới vào appState.");
+            }
+        }
+
+        res.json({ message: 'Token saved to Cloud DB' });
         
     } catch (err) {
         console.error("❌ /api/register_fcm_token error:", err && err.message ? err.message : err);
@@ -346,130 +367,123 @@ app.post('/api/register_fcm_token', async (req, res) => {
     }
 });
 
+
+// =================================================================
+// ✨ ĐIỀU CHỈNH 2: /update
+// Endpoint này được cấu trúc lại hoàn toàn.
+// Toàn bộ logic xử lý (AI, Cảnh báo, Lưu CSDL) CHỈ CHẠY ở
+// server Local (trạm trung chuyển).
+// Server Cloud (Railway) nếu nhận được /update sẽ bỏ qua.
+// =================================================================
 app.post('/update', async (req, res) => {
-    let duDoanTrangThai = "Lỗi dự đoán";
-    let duDoanThoiGian = -1;
-    let b_rate_of_change = 0;
-    let flow_rate_of_change = 0;
-    let b_absolute_change = 0; // THÊM: Biến mới cho thay đổi tuyệt đối
-    let currentTime;
     
-    try {
-        const body = req.body || {};
-        const { mucNuocA: mA, mucNuocB: mB, luuLuong: lL, isRaining: iR, trangThai: tS, thongBao: tBS, time_until_a_danger: tUAD } = body;
-
-        const mucNuocA = parseFloat(mA); const mucNuocB = parseFloat(mB); const luuLuong = parseFloat(lL);
-        const isRaining = iR === true || iR === 'true';
-        const trangThaiSimulator = tS || '';
-        const thongBaoSimulator = tBS || ''; const time_until_a_danger_simulator = tUAD;
-
-        if (isNaN(mucNuocA) || isNaN(mucNuocB) || isNaN(luuLuong) || typeof body.isRaining === 'undefined') {
-            console.warn("⚠️ Yêu cầu /update thiếu dữ liệu.");
-            return res.status(400).json({ error: 'Thiếu dữ liệu hoặc sai định dạng' });
-        }
-
-        currentTime = Date.now();
-
-        // 2. Tính tốc độ thay đổi và mức tăng tuyệt đối
-        let absoluteRise = 0;
-        if (appState.lastSensorData.timestamp !== null && appState.lastSensorData.mucNuocB !== null) {
-            const timeDiffSeconds = (currentTime - appState.lastSensorData.timestamp) / 1000;
-            if (timeDiffSeconds > 0) {
-                const lastB = appState.lastSensorData.mucNuocB;
-                const lastFlow = appState.lastSensorData.luuLuong !== null ? appState.lastSensorData.luuLuong : luuLuong;
-                b_rate_of_change = (mucNuocB - lastB) / timeDiffSeconds;
-                flow_rate_of_change = (luuLuong - lastFlow) / timeDiffSeconds;
-                absoluteRise = mucNuocB - lastB;
-                b_absolute_change = absoluteRise; // Gán cho biến mới
-            }
-        }
-
-        // KHỞI TẠO TỔNG MỨC TĂNG NẾU CHƯA CÓ
-        if (appState.b_total_rise_start === null) {
-            appState.b_total_rise_start = mucNuocB;
-            console.log(`📊 Khởi tạo tổng mức tăng từ: ${mucNuocB} cm`);
-        }
-        const b_total_rise = mucNuocB - appState.b_total_rise_start;
-
-        const currentSensorData = { mucNuocB, luuLuong, timestamp: currentTime };
-
-        // 3. CẢNH BÁO THÔNG MINH - 3 MỨC ĐỘ
-        console.log(`📊 [DEBUG] Tốc độ dâng: ${b_rate_of_change.toFixed(3)} cm/s, Tăng tuyệt đối: ${absoluteRise.toFixed(1)} cm, Mực nước B: ${mucNuocB} cm, Tổng tăng: ${b_total_rise.toFixed(1)} cm`);
-
-        const now = Date.now();
+    // ===========================================================
+    // CHẾ ĐỘ 1: CHẠY LOCAL (TRẠM TRUNG CHUYỂN)
+    // Nhiệm vụ: Xử lý, gọi AI, gửi cảnh báo, lưu vào 2 CSDL
+    // ===========================================================
+    if (!process.env.DATABASE_URL) {
+        let duDoanTrangThai = "Lỗi dự đoán";
+        let duDoanThoiGian = -1;
+        let b_rate_of_change = 0;
+        let flow_rate_of_change = 0;
+        let b_absolute_change = 0;
+        let currentTime;
         
-        // 🚨 CẢNH BÁO TỐC ĐỘ DÂNG NHANH
-        if (b_rate_of_change > RAPID_RISE_THRESHOLD) {
-            const canSendAgain = !appState.rapidRiseNotificationTime || 
-                (now - appState.rapidRiseNotificationTime) > (10 * 60 * 1000); // 10 phút cooldown
-            
-            if (!appState.sentRapidRiseNotification || canSendAgain) {
-                console.warn(`🌊 NƯỚC DÂNG NHANH! Tốc độ: ${b_rate_of_change.toFixed(2)} cm/s (Vượt ngưỡng ${RAPID_RISE_THRESHOLD} cm/s)`);
-                await sendRapidRiseNotification(b_rate_of_change);
-                appState.sentRapidRiseNotification = true;
-                appState.rapidRiseNotificationTime = now;
-                console.log("✅ ĐÃ GỬI CẢNH BÁO DÂNG NHANH");
-            }
-        } 
-        
-        // 📈 CẢNH BÁO TĂNG TUYỆT ĐỐI MẠNH
-        if (absoluteRise > ABSOLUTE_RISE_THRESHOLD) {
-            const canSendAbsoluteAlert = !appState.lastAbsoluteRiseAlert.time || 
-                (now - appState.lastAbsoluteRiseAlert.time) > (15 * 60 * 1000) || // 15 phút cooldown
-                Math.abs(absoluteRise - appState.lastAbsoluteRiseAlert.value) > 2; // Hoặc tăng khác biệt > 2cm
-            
-            if (canSendAbsoluteAlert) {
-                console.warn(`📈 MỰC NƯỚC TĂNG MẠNH! Tăng: ${absoluteRise.toFixed(1)} cm (Vượt ngưỡng ${ABSOLUTE_RISE_THRESHOLD} cm)`);
-                await sendAbsoluteRiseNotification(absoluteRise);
-                appState.lastAbsoluteRiseAlert = { value: absoluteRise, time: now };
-                console.log("✅ ĐÃ GỬI CẢNH BÁO TĂNG MẠNH");
-            }
-        }
+        try {
+            const body = req.body || {};
+            const { mucNuocA: mA, mucNuocB: mB, luuLuong: lL, isRaining: iR, trangThai: tS, thongBao: tBS, time_until_a_danger: tUAD } = body;
 
-        // 💧 CẢNH BÁO MỰC NƯỚC CAO
-        if (mucNuocB > HIGH_WATER_LEVEL_THRESHOLD) {
-            const canSendHighWaterAlert = !appState.lastHighWaterAlert.time || 
-                (now - appState.lastHighWaterAlert.time) > (20 * 60 * 1000) || // 20 phút cooldown
-                Math.abs(mucNuocB - appState.lastHighWaterAlert.value) > 3; // Hoặc thay đổi > 3cm
-            
-            if (canSendHighWaterAlert) {
-                console.warn(`💧 MỰC NƯỚC CAO! Mực nước B: ${mucNuocB} cm (Vượt ngưỡng ${HIGH_WATER_LEVEL_THRESHOLD} cm)`);
-                await sendHighWaterNotification(mucNuocB);
-                appState.lastHighWaterAlert = { value: mucNuocB, time: now };
-                console.log("✅ ĐÃ GỬI CẢNH BÁO MỰC NƯỚC CAO");
-            }
-        }
-        
-        // 🔄 RESET KHI TỐC ĐỘ GIẢM
-        if (b_rate_of_change <= RAPID_RISE_THRESHOLD * 0.3) {
-            if (appState.sentRapidRiseNotification) {
-                console.info("💧 Tốc độ dâng nước đã giảm, cho phép gửi cảnh báo mới khi cần");
-                appState.sentRapidRiseNotification = false;
-            }
-        }
+            const mucNuocA = parseFloat(mA); const mucNuocB = parseFloat(mB); const luuLuong = parseFloat(lL);
+            const isRaining = iR === true || iR === 'true';
+            const trangThaiSimulator = tS || '';
+            const thongBaoSimulator = tBS || ''; const time_until_a_danger_simulator = tUAD;
 
-        // 4. Gọi AI NÂNG CAO (CHỈ KHI CHẠY LOCAL)
-        if (!process.env.DATABASE_URL) {
+            if (isNaN(mucNuocA) || isNaN(mucNuocB) || isNaN(luuLuong) || typeof body.isRaining === 'undefined') {
+                console.warn("⚠️ [Local /update] Yêu cầu thiếu dữ liệu.");
+                return res.status(400).json({ error: 'Thiếu dữ liệu hoặc sai định dạng' });
+            }
+
+            currentTime = Date.now();
+
+            // 2. Tính tốc độ thay đổi và mức tăng tuyệt đối
+            let absoluteRise = 0;
+            if (appState.lastSensorData.timestamp !== null && appState.lastSensorData.mucNuocB !== null) {
+                const timeDiffSeconds = (currentTime - appState.lastSensorData.timestamp) / 1000;
+                if (timeDiffSeconds > 0) {
+                    const lastB = appState.lastSensorData.mucNuocB;
+                    const lastFlow = appState.lastSensorData.luuLuong !== null ? appState.lastSensorData.luuLuong : luuLuong;
+                    b_rate_of_change = (mucNuocB - lastB) / timeDiffSeconds;
+                    flow_rate_of_change = (luuLuong - lastFlow) / timeDiffSeconds;
+                    absoluteRise = mucNuocB - lastB;
+                    b_absolute_change = absoluteRise;
+                }
+            }
+
+            if (appState.b_total_rise_start === null) {
+                appState.b_total_rise_start = mucNuocB;
+                console.log(`📊 Khởi tạo tổng mức tăng từ: ${mucNuocB} cm`);
+            }
+            const b_total_rise = mucNuocB - appState.b_total_rise_start;
+
+            const currentSensorData = { mucNuocB, luuLuong, timestamp: currentTime };
+
+            // 3. CẢNH BÁO THÔNG MINH - 3 MỨC ĐỘ
+            console.log(`📊 [DEBUG] Tốc độ dâng: ${b_rate_of_change.toFixed(3)} cm/s, Tăng tuyệt đối: ${absoluteRise.toFixed(1)} cm, Mực nước B: ${mucNuocB} cm, Tổng tăng: ${b_total_rise.toFixed(1)} cm`);
+            const now = Date.now();
+            
+            // 🚨 CẢNH BÁO TỐC ĐỘ DÂNG NHANH
+            if (b_rate_of_change > RAPID_RISE_THRESHOLD) {
+                const canSendAgain = !appState.rapidRiseNotificationTime || (now - appState.rapidRiseNotificationTime) > (10 * 60 * 1000); // 10 phút
+                if (!appState.sentRapidRiseNotification || canSendAgain) {
+                    console.warn(`🌊 NƯỚC DÂNG NHANH! Tốc độ: ${b_rate_of_change.toFixed(2)} cm/s`);
+                    await sendRapidRiseNotification(b_rate_of_change);
+                    appState.sentRapidRiseNotification = true;
+                    appState.rapidRiseNotificationTime = now;
+                }
+            } 
+            
+            // 📈 CẢNH BÁO TĂNG TUYỆT ĐỐI MẠNH
+            if (absoluteRise > ABSOLUTE_RISE_THRESHOLD) {
+                const canSendAbsoluteAlert = !appState.lastAbsoluteRiseAlert.time || (now - appState.lastAbsoluteRiseAlert.time) > (15 * 60 * 1000) || Math.abs(absoluteRise - appState.lastAbsoluteRiseAlert.value) > 2;
+                if (canSendAbsoluteAlert) {
+                    console.warn(`📈 MỰC NƯỚC TĂNG MẠNH! Tăng: ${absoluteRise.toFixed(1)} cm`);
+                    await sendAbsoluteRiseNotification(absoluteRise);
+                    appState.lastAbsoluteRiseAlert = { value: absoluteRise, time: now };
+                }
+            }
+
+            // 💧 CẢNH BÁO MỰC NƯỚC CAO
+            if (mucNuocB > HIGH_WATER_LEVEL_THRESHOLD) {
+                const canSendHighWaterAlert = !appState.lastHighWaterAlert.time || (now - appState.lastHighWaterAlert.time) > (20 * 60 * 1000) || Math.abs(mucNuocB - appState.lastHighWaterAlert.value) > 3;
+                if (canSendHighWaterAlert) {
+                    console.warn(`💧 MỰC NƯỚC CAO! Mực nước B: ${mucNuocB} cm`);
+                    await sendHighWaterNotification(mucNuocB);
+                    appState.lastHighWaterAlert = { value: mucNuocB, time: now };
+                }
+            }
+            
+            // 🔄 RESET KHI TỐC ĐỘ GIẢM
+            if (b_rate_of_change <= RAPID_RISE_THRESHOLD * 0.3) {
+                if (appState.sentRapidRiseNotification) {
+                    console.info("💧 Tốc độ dâng nước đã giảm, cho phép gửi cảnh báo mới khi cần");
+                    appState.sentRapidRiseNotification = false;
+                }
+            }
+
+            // 4. Gọi AI NÂNG CAO (CHỈ KHI CHẠY LOCAL)
             try {
-                // TÍNH TOÁN CÁC FEATURES NÂNG CAO CHO AI MỚI
                 const ab_diff = mucNuocB - mucNuocA;
-                const ab_ratio = mucNuocB / (mucNuocA + 0.001); // Tránh chia cho 0
+                const ab_ratio = mucNuocB / (mucNuocA + 0.001);
                 const danger_index = (mucNuocB * 0.3) + (Math.abs(b_rate_of_change) * 2.0) + (Math.abs(b_absolute_change) * 0.5) + (ab_diff * 0.2);
-                const b_trend = mucNuocB; // Đơn giản, có thể cải tiến sau
+                const b_trend = mucNuocB; 
 
                 const ai_payload = { 
                     mucNuocA, mucNuocB, luuLuong, 
                     is_raining_now: isRaining ? 1 : 0, 
-                    b_rate_of_change, 
-                    flow_rate_of_change, 
-                    ab_diff,
-                    ab_ratio,
-                    b_absolute_change,
-                    b_total_rise,
-                    danger_index,
-                    b_trend
+                    b_rate_of_change, flow_rate_of_change, ab_diff,
+                    ab_ratio, b_absolute_change, b_total_rise,
+                    danger_index, b_trend
                 };
-
                 console.log(`🧠 [AI Enhanced] Gửi 12 features đến AI...`);
                 
                 const [statusRes, timeRes] = await Promise.all([
@@ -480,20 +494,17 @@ app.post('/update', async (req, res) => {
                 duDoanTrangThai = statusRes?.data?.prediction || duDoanTrangThai;
                 duDoanThoiGian = parseFloat(timeRes?.data?.predicted_seconds) || -1;
                 
-                // HIỂN THỊ PHÂN TÍCH NGUY HIỂM CHI TIẾT
                 const dangerAnalysis = statusRes?.data?.danger_analysis;
                 if (dangerAnalysis) {
                     console.log(`🔍 [AI Analysis] Mực nước: ${dangerAnalysis.mucnuocb_level}, Tốc độ: ${dangerAnalysis.rate_of_change_level}, Thay đổi: ${dangerAnalysis.absolute_change_level}, Chỉ số: ${dangerAnalysis.danger_index.toFixed(1)}`);
                 }
-                
                 console.log(`[🧠 AI Enhanced Status]: ${duDoanTrangThai}, Countdown: ${duDoanThoiGian >= 0 ? duDoanThoiGian.toFixed(2) + 's' : 'N/A'}`);
+
             } catch (ai_err) {
                 console.error("❌ Lỗi gọi API dự đoán NÂNG CAO (Python):", ai_err && ai_err.message ? ai_err.message : ai_err);
             }
-        }
 
-        // 5. Gửi thông báo AI (CHỈ KHI CHẠY LOCAL)
-        if (!process.env.DATABASE_URL) {
+            // 5. Gửi thông báo AI (CHỈ KHI CHẠY LOCAL)
             if (shouldSendAIStatusNotification(appState.lastSentAIStatus, duDoanTrangThai)) {
                 await sendAIStatusNotification(duDoanTrangThai, duDoanThoiGian);
                 appState.lastSentAIStatus = duDoanTrangThai;
@@ -509,74 +520,83 @@ app.post('/update', async (req, res) => {
                     appState.lastDangerAlertTime = now;
                 }
             }
-        }
 
-        // ==========================================
-        // === 7. LƯU DỮ LIỆU VÀO DB (Gửi 2 nơi)
-        // ==========================================
-        const sql = `INSERT INTO sensor_data 
-            (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
-            VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id, created_at`;
+            // ==========================================
+            // === 7. LƯU DỮ LIỆU VÀO DB (Gửi 2 nơi)
+            // ==========================================
+            const sql = `INSERT INTO sensor_data 
+                (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
+                VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9) RETURNING id, created_at`;
+            const values = [
+                mucNuocA, mucNuocB, luuLuong,
+                trangThaiSimulator, thongBaoSimulator,
+                duDoanTrangThai,
+                formatCountdown(typeof time_until_a_danger_simulator === 'number' ? time_until_a_danger_simulator : duDoanThoiGian),
+                (typeof duDoanThoiGian === 'number' && !isNaN(duDoanThoiGian)) ? duDoanThoiGian : null,
+                isRaining
+            ];
 
-        const values = [
-            mucNuocA, mucNuocB, luuLuong,
-            trangThaiSimulator, thongBaoSimulator,
-            duDoanTrangThai,
-            formatCountdown(typeof time_until_a_danger_simulator === 'number' ? time_until_a_danger_simulator : duDoanThoiGian),
-            (typeof duDoanThoiGian === 'number' && !isNaN(duDoanThoiGian)) ? duDoanThoiGian : null,
-            isRaining
-        ];
-
-        const dbTasks = [];
-        const logMsg = `[DB Save]: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}`;
-        
-        if (pool) {
-            dbTasks.push(
-                pool.query(sql, values)
-                    .then((dbRes) => {
-                        console.log(`[✓] ${process.env.DATABASE_URL ? '[Cloud]' : '[Local]'} ${logMsg}`);
-                    })
-                    .catch(err => console.error(`❌ Lỗi ${process.env.DATABASE_URL ? '[Cloud]' : '[Local]'} DB Save:`, err.message))
-            );
-        }
-
-        // CHỈ KHI CHẠY LOCAL (Trạm trung chuyển)
-        if (railwayPool) {
-            dbTasks.push(
-                railwayPool.query(sql, values)
-                    .then(() => console.log(`[✓] [Sync->Cloud] ${logMsg}`))
-                    .catch(err => console.error("❌ Lỗi [Sync->Cloud] DB Save:", err.message))
-            );
-        }
-
-        await Promise.all(dbTasks);
-
-        // 8. Cập nhật trạng thái
-        appState.lastSensorData = currentSensorData;
-
-        // 9. Phản hồi
-        res.status(200).json({
-            message: 'Đã lưu và dự đoán thành công.',
-            prediction_status: duDoanTrangThai,
-            prediction_time: duDoanThoiGian,
-            alerts_sent: {
-                rapid_rise: appState.sentRapidRiseNotification,
-                absolute_rise: appState.lastAbsoluteRiseAlert.value !== null,
-                high_water: appState.lastHighWaterAlert.value !== null
+            const dbTasks = [];
+            const logMsg = `[DB Save]: A:${mucNuocA.toFixed(1)}, B:${mucNuocB.toFixed(1)}`;
+            
+            // 1. Lưu vào CSDL Local
+            if (pool) {
+                dbTasks.push(
+                    pool.query(sql, values)
+                        .then(() => console.log(`[✓] [Local] ${logMsg}`))
+                        .catch(err => console.error(`❌ Lỗi [Local] DB Save:`, err.message))
+                );
             }
-        });
 
-    } catch (err) {
-        console.error("❌ Lỗi /update:", err && err.message ? err.message : err);
-        if (currentTime) {
-            const body = req.body || {};
-            appState.lastSensorData = {
-                mucNuocB: parseFloat(body.mucNuocB) || appState.lastSensorData.mucNuocB || 0,
-                luuLuong: parseFloat(body.luuLuong) || appState.lastSensorData.luuLuong || 0,
-                timestamp: currentTime
-            };
+            // 2. Đồng bộ lên CSDL Cloud
+            if (railwayPool) {
+                dbTasks.push(
+                    railwayPool.query(sql, values)
+                        .then(() => console.log(`[✓] [Sync->Cloud] ${logMsg}`))
+                        .catch(err => console.error("❌ Lỗi [Sync->Cloud] DB Save:", err.message))
+                );
+            }
+
+            await Promise.all(dbTasks);
+
+            // 8. Cập nhật trạng thái
+            appState.lastSensorData = currentSensorData;
+
+            // 9. Phản hồi
+            res.status(200).json({
+                message: 'Đã lưu và dự đoán thành công.',
+                prediction_status: duDoanTrangThai,
+                prediction_time: duDoanThoiGian,
+                alerts_sent: {
+                    rapid_rise: appState.sentRapidRiseNotification,
+                    absolute_rise: appState.lastAbsoluteRiseAlert.value !== null,
+                    high_water: appState.lastHighWaterAlert.value !== null
+                }
+            });
+
+        } catch (err) {
+            console.error("❌ Lỗi nghiêm trọng [Local /update]:", err && err.message ? err.message : err);
+            if (currentTime) {
+                const body = req.body || {};
+                appState.lastSensorData = {
+                    mucNuocB: parseFloat(body.mucNuocB) || appState.lastSensorData.mucNuocB || 0,
+                    luuLuong: parseFloat(body.luuLuong) || appState.lastSensorData.luuLuong || 0,
+                    timestamp: currentTime
+                };
+            }
+            res.status(500).json({ error: 'Lỗi server khi xử lý dữ liệu', details: err && err.message ? err.message : err });
         }
-        res.status(500).json({ error: 'Lỗi server khi xử lý dữ liệu', details: err && err.message ? err.message : err });
+    
+    // ===========================================================
+    // CHẾ ĐỘ 2: CHẠY TRÊN CLOUD (RAILWAY)
+    // Nhiệm vụ: Không làm gì cả. Chỉ ghi log và trả về.
+    // ===========================================================
+    } else {
+        console.warn("⚠️ [Cloud Server] Đã nhận được yêu cầu /update. Yêu cầu này phải được gửi đến Server Local (Trạm trung chuyển). Đang bỏ qua...");
+        res.status(403).json({ 
+            error: 'Access Denied', 
+            message: 'This endpoint is only for the local transit server. The cloud server only serves /api/register_fcm_token and /api/chart_data.' 
+        });
     }
 });
 
@@ -639,17 +659,32 @@ app.post('/upload', upload.single('file'), (req, res) => {
 // --------------- START SERVER ----------------
 app.listen(SERVER_PORT, () => {
     console.log(`🚀 Server Node.js NÂNG CAO đang chạy tại cổng: ${SERVER_PORT}`);
-    console.log(`🧠 Kết nối tới AI Python NÂNG CAO: ${PYTHON_SERVER_URL}`);
-    console.log("📱 Sẵn sàng nhận FCM token từ client.");
-    console.log("🎯 Hệ thống cảnh báo 3 cấp độ:");
-    console.log(`   🌊 Tốc độ dâng: > ${RAPID_RISE_THRESHOLD} cm/s`);
-    console.log(`   📈 Tăng tuyệt đối: > ${ABSOLUTE_RISE_THRESHOLD} cm`);
-    console.log(`   💧 Mực nước cao: > ${HIGH_WATER_LEVEL_THRESHOLD} cm`);
     
-    // (CHỈ CHẠY TRÊN LOCAL: Bắt đầu đồng bộ token)
-    if (railwayPool) {
-        console.log(`🔄 [FCM Mailbox] Bắt đầu đồng bộ token mỗi ${TOKEN_SYNC_INTERVAL / 1000} giây...`);
-        syncTokenFromCloudDB(); // Chạy 1 lần ngay
-        setInterval(syncTokenFromCloudDB, TOKEN_SYNC_INTERVAL); // Chạy lặp lại
+    // Phân biệt chế độ chạy
+    if (process.env.DATABASE_URL) {
+        console.log("==========================================");
+        console.log("☀️ CHẾ ĐỘ: CLOUD (RAILWAY)");
+        console.log("   - Nhiệm vụ: Nhận FCM Token, Cung cấp API cho App.");
+        console.log("   - Sẽ KHÔNG xử lý /update, không gọi AI.");
+        console.log("==========================================");
+    } else {
+        console.log("==========================================");
+        console.log("🏡 CHẾ ĐỘ: LOCAL (TRẠM TRUNG CHUYỂN)");
+        console.log(`   - Kết nối tới AI Python: ${PYTHON_SERVER_URL}`);
+        console.log("   - Sẵn sàng nhận /update từ Sensor.");
+        console.log("   - Sẽ gửi cảnh báo và đồng bộ CSDL lên Cloud.");
+        console.log("   - Hệ thống cảnh báo 3 cấp độ:");
+        console.log(`      🌊 Tốc độ dâng: > ${RAPID_RISE_THRESHOLD} cm/s`);
+        console.log(`      📈 Tăng tuyệt đối: > ${ABSOLUTE_RISE_THRESHOLD} cm`);
+        console.log(`      💧 Mực nước cao: > ${HIGH_WATER_LEVEL_THRESHOLD} cm`);
+        
+        if (railwayPool) {
+            console.log(`   - 🔄 [FCM Mailbox] Bắt đầu đồng bộ token mỗi ${TOKEN_SYNC_INTERVAL / 1000} giây...`);
+            syncTokenFromCloudDB(); // Chạy 1 lần ngay
+            setInterval(syncTokenFromCloudDB, TOKEN_SYNC_INTERVAL); // Chạy lặp lại
+        }
+        console.log("==========================================");
     }
+    
+    ensureTables().catch(e=>console.error("Lỗi ensureTables khi khởi động:", e));
 });
