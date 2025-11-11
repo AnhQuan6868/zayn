@@ -290,6 +290,71 @@ async function ensureTables() {
     }
 }
 ensureTables().catch(e=>console.error(e));
+// =============================
+// HÀM ĐỒNG BỘ TOÀN BỘ LỊCH SỬ LOCAL → RAILWAY
+// =============================
+async function syncFullHistoryToRailway() {
+    if (!railwayPool) {
+        console.log("⚠️ Không có kết nối Railway, bỏ qua đồng bộ lịch sử.");
+        return;
+    }
+
+    try {
+        console.log("🔄 Bắt đầu đồng bộ TOÀN BỘ lịch sử từ Local lên Railway...");
+        
+        // 1. Lấy toàn bộ dữ liệu từ Local
+        const localResult = await pool.query(`
+            SELECT * FROM sensor_data 
+            ORDER BY id ASC
+        `);
+        
+        if (localResult.rows.length === 0) {
+            console.log("📭 Không có dữ liệu lịch sử trong Local DB.");
+            return;
+        }
+        
+        console.log(`📊 Tìm thấy ${localResult.rows.length} bản ghi trong Local DB`);
+        
+        let successCount = 0;
+        let errorCount = 0;
+        
+        // 2. Đồng bộ từng bản ghi lên Railway
+        for (const row of localResult.rows) {
+            try {
+                // Kiểm tra xem bản ghi đã tồn tại trên Railway chưa
+                const checkResult = await railwayPool.query(
+                    'SELECT id FROM sensor_data WHERE id = $1', 
+                    [row.id]
+                );
+                
+                if (checkResult.rows.length === 0) {
+                    // Chưa tồn tại - chèn mới
+                    await railwayPool.query(`
+                        INSERT INTO sensor_data 
+                        (id, mucnuoca, mucnuocb, luuluong, trangthai, thongbao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    `, [
+                        row.id, row.mucnuoca, row.mucnuocb, row.luuluong, 
+                        row.trangthai, row.thongbao, row.created_at, 
+                        row.predicted_trangthai, row.time_until_a_danger, 
+                        row.predicted_time_to_a, row.is_raining
+                    ]);
+                    successCount++;
+                } else {
+                    console.log(`⏭️ Bản ghi ID ${row.id} đã tồn tại trên Railway, bỏ qua`);
+                }
+            } catch (rowError) {
+                console.error(`❌ Lỗi đồng bộ bản ghi ID ${row.id}:`, rowError.message);
+                errorCount++;
+            }
+        }
+        
+        console.log(`✅ Đồng bộ lịch sử hoàn tất: ${successCount} thành công, ${errorCount} lỗi`);
+        
+    } catch (err) {
+        console.error("❌ Lỗi nghiêm trọng khi đồng bộ lịch sử:", err.message);
+    }
+}
 
 // =============================
 // (HÀM NÂNG CẤP: TỰ ĐỘNG LẤY NHIỀU TOKEN)
