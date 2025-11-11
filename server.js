@@ -36,6 +36,7 @@ const RAPID_RISE_THRESHOLD = 0.3; // (Ngưỡng của bạn)
 const ABSOLUTE_RISE_THRESHOLD = 3.0; // (Ngưỡng của bạn)
 const HIGH_WATER_LEVEL_THRESHOLD = 12.0; // (Ngưỡng của bạn)
 const TOKEN_SYNC_INTERVAL = 30000; // 30 giây
+const DATA_SYNC_INTERVAL = 60000; // 60 giây - đồng bộ dữ liệu
 
 // =============================
 // KHỞI TẠO CSDL (DATABASE)
@@ -113,7 +114,8 @@ const appState = {
     lastSensorData: { mucNuocB: null, luuLuong: null, timestamp: null },
     lastSentAIStatus: "Bình thường",
     sentRapidRiseNotification: false,
-    lastDangerAlertTime: null
+    lastDangerAlertTime: null,
+    lastSyncedDataId: 0 // Theo dõi ID cuối cùng đã đồng bộ
 };
 
 // =============================
@@ -326,6 +328,69 @@ async function ensureTables() {
 ensureTables().catch(e => console.error(e));
 
 // =============================
+// HÀM ĐỒNG BỘ DỮ LIỆU TỪ LOCAL LÊN RAILWAY
+// =============================
+async function syncDataToRailway() {
+    if (!railwayPool || !pool) {
+        console.log("⚠️ Không thể đồng bộ: Thiếu kết nối CSDL");
+        return;
+    }
+
+    try {
+        // Lấy dữ liệu mới từ local chưa được đồng bộ
+        const localData = await pool.query(
+            "SELECT * FROM sensor_data WHERE id > $1 ORDER BY id ASC LIMIT 50",
+            [appState.lastSyncedDataId]
+        );
+
+        if (localData.rows.length === 0) {
+            return; // Không có dữ liệu mới
+        }
+
+        console.log(`🔄 [Data Sync] Phát hiện ${localData.rows.length} bản ghi mới cần đồng bộ`);
+
+        let lastSyncedId = appState.lastSyncedDataId;
+        
+        // Đồng bộ từng bản ghi
+        for (const row of localData.rows) {
+            try {
+                const insertSql = `
+                    INSERT INTO sensor_data 
+                    (mucNuocA, mucNuocB, luuLuong, trangThai, thongBao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining) 
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    ON CONFLICT DO NOTHING
+                `;
+                
+                await railwayPool.query(insertSql, [
+                    row.mucnuoca, row.mucnuocb, row.luuluong,
+                    row.trangthai, row.thongbao,
+                    row.created_at,
+                    row.predicted_trangthai,
+                    row.time_until_a_danger,
+                    row.predicted_time_to_a,
+                    row.is_raining
+                ]);
+                
+                lastSyncedId = Math.max(lastSyncedId, row.id);
+                console.log(`✅ [Data Sync] Đã đồng bộ bản ghi ID ${row.id}`);
+                
+            } catch (syncError) {
+                console.error(`❌ [Data Sync] Lỗi đồng bộ bản ghi ID ${row.id}:`, syncError.message);
+                // Dừng lại nếu gặp lỗi để tránh mất mát dữ liệu
+                break;
+            }
+        }
+
+        // Cập nhật ID cuối cùng đã đồng bộ
+        appState.lastSyncedDataId = lastSyncedId;
+        console.log(`✅ [Data Sync] Hoàn thành! ID cuối cùng đã đồng bộ: ${appState.lastSyncedDataId}`);
+
+    } catch (error) {
+        console.error("❌ [Data Sync] Lỗi trong quá trình đồng bộ:", error.message);
+    }
+}
+
+// =============================
 // (HÀM NÂNG CẤP: Đọc từ 'railwayPool')
 // =============================
 async function syncTokenFromCloudDB() {
@@ -363,7 +428,8 @@ app.get('/', (req, res) => {
         status: 'OK', 
         now: new Date().toISOString(),
         environment: process.env.DATABASE_URL ? 'Cloud' : 'Local',
-        fcm_tokens_count: appState.fcmTokens.length
+        fcm_tokens_count: appState.fcmTokens.length,
+        last_synced_data_id: appState.lastSyncedDataId
     });
 });
 
@@ -517,6 +583,10 @@ app.post('/update', async (req, res) => {
                 pool.query(sql, values)
                     .then((dbRes) => {
                         console.log(`[✓] ${process.env.DATABASE_URL ? '[Cloud]' : '[Local]'} ${logMsg}`);
+                        // Cập nhật ID cuối cùng để đồng bộ
+                        if (dbRes.rows[0] && dbRes.rows[0].id) {
+                            appState.lastSyncedDataId = Math.max(appState.lastSyncedDataId, dbRes.rows[0].id);
+                        }
                     })
                     .catch(err => console.error(`❌ Lỗi ${process.env.DATABASE_URL ? '[Cloud]' : '[Local]'} DB Save:`, err.message))
             );
@@ -638,11 +708,24 @@ app.listen(SERVER_PORT, () => {
     console.log(`   📈 Tăng tuyệt đối: > ${ABSOLUTE_RISE_THRESHOLD} cm`);
     console.log(`   💧 Mực nước cao: > ${HIGH_WATER_LEVEL_THRESHOLD} cm`);
     
-    // (CHỈ CHẠY TRÊN LOCAL: Bắt đầu đồng bộ token)
+    // (CHỈ CHẠY TRÊN LOCAL: Bắt đầu đồng bộ token và dữ liệu)
     if (railwayPool) {
         console.log(`🔄 [FCM Mailbox] Bắt đầu đồng bộ token mỗi ${TOKEN_SYNC_INTERVAL / 1000} giây...`);
         syncTokenFromCloudDB(); // Chạy 1 lần ngay
         setInterval(syncTokenFromCloudDB, TOKEN_SYNC_INTERVAL); // Chạy lặp lại
+        
+        console.log(`🔄 [Data Sync] Bắt đầu đồng bộ dữ liệu mỗi ${DATA_SYNC_INTERVAL / 1000} giây...`);
+        // Khởi tạo lastSyncedDataId - lấy ID lớn nhất từ local
+        pool.query("SELECT MAX(id) as max_id FROM sensor_data")
+            .then(result => {
+                if (result.rows[0] && result.rows[0].max_id) {
+                    appState.lastSyncedDataId = result.rows[0].max_id;
+                    console.log(`✅ [Data Sync] Khởi tạo lastSyncedDataId: ${appState.lastSyncedDataId}`);
+                }
+            })
+            .catch(err => console.error("❌ Lỗi khởi tạo lastSyncedDataId:", err.message));
+        
+        setInterval(syncDataToRailway, DATA_SYNC_INTERVAL); // Chạy lặp lại
     }
 
     // (CHỈ CHẠY TRÊN CLOUD: Bắt đầu đồng bộ token)
