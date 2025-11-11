@@ -1,0 +1,14 @@
+# Chặn thư viện
+node_modules/
+
+# Chặn file bí mật
+.env
+serviceAccountKey.json
+
+# === CHẶN FILE PYTHON & AI ===
+*.py
+*.pkl
+fake_sensor.js
+
+# Chặn môi trường ảo Python
+/venv/
