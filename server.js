@@ -167,6 +167,75 @@ function shouldSendAIStatusNotification(lastStatus, currentStatus) {
     if (lastStatus !== currentStatus) { console.log(`🔄 Thay đổi trạng thái AI: ${lastStatus} -> ${currentStatus}`); return true; }
     return false;
 }
+// =============================
+// HÀM ĐỒNG BỘ TOÀN BỘ LỊCH SỬ LOCAL → RAILWAY
+// =============================
+async function syncFullHistoryToRailway() {
+    if (!railwayPool) {
+        console.log("⚠️ Không có kết nối Railway, bỏ qua đồng bộ lịch sử.");
+        return;
+    }
+
+    try {
+        console.log("🔄 Bắt đầu đồng bộ TOÀN BỘ lịch sử từ Local lên Railway...");
+        
+        // 1. Lấy toàn bộ dữ liệu từ Local
+        const localResult = await pool.query(`
+            SELECT * FROM sensor_data 
+            ORDER BY id ASC
+        `);
+        
+        if (localResult.rows.length === 0) {
+            console.log("📭 Không có dữ liệu lịch sử trong Local DB.");
+            return;
+        }
+        
+        console.log(`📊 Tìm thấy ${localResult.rows.length} bản ghi trong Local DB`);
+        
+        let successCount = 0;
+        let errorCount = 0;
+        
+        // 2. Đồng bộ từng bản ghi lên Railway
+        for (const row of localResult.rows) {
+            try {
+                // Kiểm tra xem bản ghi đã tồn tại trên Railway chưa
+                const checkResult = await railwayPool.query(
+                    'SELECT id FROM sensor_data WHERE id = $1', 
+                    [row.id]
+                );
+                
+                if (checkResult.rows.length === 0) {
+                    // Chưa tồn tại - chèn mới
+                    await railwayPool.query(`
+                        INSERT INTO sensor_data 
+                        (id, mucnuoca, mucnuocb, luuluong, trangthai, thongbao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    `, [
+                        row.id, row.mucnuoca, row.mucnuocb, row.luuluong, 
+                        row.trangthai, row.thongbao, row.created_at, 
+                        row.predicted_trangthai, row.time_until_a_danger, 
+                        row.predicted_time_to_a, row.is_raining
+                    ]);
+                    successCount++;
+                    
+                    // Log tiến độ mỗi 50 bản ghi
+                    if (successCount % 50 === 0) {
+                        console.log(`📦 Đã đồng bộ ${successCount} bản ghi...`);
+                    }
+                }
+                // Nếu đã tồn tại thì bỏ qua, không cần log
+            } catch (rowError) {
+                console.error(`❌ Lỗi đồng bộ bản ghi ID ${row.id}:`, rowError.message);
+                errorCount++;
+            }
+        }
+        
+        console.log(`✅ Đồng bộ lịch sử hoàn tất: ${successCount} thành công, ${errorCount} lỗi`);
+        
+    } catch (err) {
+        console.error("❌ Lỗi nghiêm trọng khi đồng bộ lịch sử:", err.message);
+    }
+}
 
 // =============================
 // HÀM GỬI THÔNG BÁO PUSH
@@ -290,71 +359,7 @@ async function ensureTables() {
     }
 }
 ensureTables().catch(e=>console.error(e));
-// =============================
-// HÀM ĐỒNG BỘ TOÀN BỘ LỊCH SỬ LOCAL → RAILWAY
-// =============================
-async function syncFullHistoryToRailway() {
-    if (!railwayPool) {
-        console.log("⚠️ Không có kết nối Railway, bỏ qua đồng bộ lịch sử.");
-        return;
-    }
 
-    try {
-        console.log("🔄 Bắt đầu đồng bộ TOÀN BỘ lịch sử từ Local lên Railway...");
-        
-        // 1. Lấy toàn bộ dữ liệu từ Local
-        const localResult = await pool.query(`
-            SELECT * FROM sensor_data 
-            ORDER BY id ASC
-        `);
-        
-        if (localResult.rows.length === 0) {
-            console.log("📭 Không có dữ liệu lịch sử trong Local DB.");
-            return;
-        }
-        
-        console.log(`📊 Tìm thấy ${localResult.rows.length} bản ghi trong Local DB`);
-        
-        let successCount = 0;
-        let errorCount = 0;
-        
-        // 2. Đồng bộ từng bản ghi lên Railway
-        for (const row of localResult.rows) {
-            try {
-                // Kiểm tra xem bản ghi đã tồn tại trên Railway chưa
-                const checkResult = await railwayPool.query(
-                    'SELECT id FROM sensor_data WHERE id = $1', 
-                    [row.id]
-                );
-                
-                if (checkResult.rows.length === 0) {
-                    // Chưa tồn tại - chèn mới
-                    await railwayPool.query(`
-                        INSERT INTO sensor_data 
-                        (id, mucnuoca, mucnuocb, luuluong, trangthai, thongbao, created_at, predicted_trangthai, time_until_a_danger, predicted_time_to_a, is_raining)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-                    `, [
-                        row.id, row.mucnuoca, row.mucnuocb, row.luuluong, 
-                        row.trangthai, row.thongbao, row.created_at, 
-                        row.predicted_trangthai, row.time_until_a_danger, 
-                        row.predicted_time_to_a, row.is_raining
-                    ]);
-                    successCount++;
-                } else {
-                    console.log(`⏭️ Bản ghi ID ${row.id} đã tồn tại trên Railway, bỏ qua`);
-                }
-            } catch (rowError) {
-                console.error(`❌ Lỗi đồng bộ bản ghi ID ${row.id}:`, rowError.message);
-                errorCount++;
-            }
-        }
-        
-        console.log(`✅ Đồng bộ lịch sử hoàn tất: ${successCount} thành công, ${errorCount} lỗi`);
-        
-    } catch (err) {
-        console.error("❌ Lỗi nghiêm trọng khi đồng bộ lịch sử:", err.message);
-    }
-}
 
 // =============================
 // (HÀM NÂNG CẤP: TỰ ĐỘNG LẤY NHIỀU TOKEN)
@@ -694,6 +699,33 @@ app.get('/api/history_by_date', async (req, res) => {
         res.status(500).json({ error: 'Lỗi server khi lấy lịch sử' });
     }
 });
+// =============================
+// ENDPOINT ĐỒNG BỘ LỊCH SỬ THỦ CÔNG
+// =============================
+app.post('/api/sync_full_history', async (req, res) => {
+    if (!railwayPool) {
+        return res.status(400).json({ 
+            error: 'Chỉ khả dụng trên Local Server có kết nối Railway' 
+        });
+    }
+    
+    try {
+        console.log("🚀 Kích hoạt đồng bộ lịch sử thủ công...");
+        
+        // Chạy đồng bộ trong background, không chờ kết quả
+        syncFullHistoryToRailway().catch(e => 
+            console.error("Lỗi background sync:", e.message)
+        );
+        
+        res.json({ 
+            message: 'Đã bắt đầu đồng bộ toàn bộ lịch sử lên Railway (chạy nền)' 
+        });
+        
+    } catch (err) {
+        console.error("❌ Lỗi kích hoạt đồng bộ:", err.message);
+        res.status(500).json({ error: 'Lỗi server: ' + err.message });
+    }
+});
 
 // API /upload
 app.post('/upload', upload.single('file'), (req, res) => {
@@ -716,5 +748,13 @@ app.listen(SERVER_PORT, () => {
         console.log(`🔄 [FCM Mailbox] Bắt đầu đồng bộ token mỗi ${TOKEN_SYNC_INTERVAL / 1000} giây...`);
         syncTokenFromCloudDB(); // Chạy 1 lần ngay
         setInterval(syncTokenFromCloudDB, TOKEN_SYNC_INTERVAL); // Chạy lặp lại
+        
+        // 🆕 THÊM: Tự động đồng bộ lịch sử khi khởi động (sau 5 giây)
+        setTimeout(() => {
+            console.log("🔄 Tự động đồng bộ lịch sử khi khởi động...");
+            syncFullHistoryToRailway().catch(e => 
+                console.error("Lỗi auto-sync history:", e.message)
+            );
+        }, 5000);
     }
 });
