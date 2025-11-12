@@ -650,21 +650,42 @@ app.get('/api/chart_data', async (req, res) => {
 
 // History by date
 app.get('/api/history_by_date', async (req, res) => {
-    if (!pool) return res.status(500).json({ error: 'CSDL chưa sẵn sàng' });
     try {
-        const { date } = req.query;
+        const { date } = req.query; // (Lấy ?date=... từ điện thoại)
         if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
             return res.status(400).json({ error: 'Thiếu hoặc sai định dạng tham số ngày (YYYY-MM-DD)' });
         }
-        const sql = `SELECT * FROM sensor_data WHERE (created_at AT TIME ZONE '+07')::date = $1 ORDER BY id DESC;`;
+        
+        // ❌ LỖI CŨ (Có thể bạn đang dùng):
+        // const sql = `SELECT * FROM sensor_data WHERE created_at::date = $1 ORDER BY id DESC;`;
+        // Lỗi này gây ra "bug nửa đêm" và "bug 23:00"
+
+        // ✅ SỬA LẠI THÀNH CÂU NÀY:
+        // Query này ra lệnh cho CSDL:
+        // 1. Lấy cột created_at (đang là UTC)
+        // 2. Chuyển nó sang múi giờ Việt Nam (+07)
+        // 3. Lấy phần 'ngày' (::date) của giờ Việt Nam
+        // 4. So sánh với ngày mà điện thoại gửi ($1)
+        const sql = `
+            SELECT 
+                *, 
+                predicted_thoigian_seconds -- Đảm bảo cột này được chọn
+            FROM 
+                sensor_data 
+            WHERE 
+                (created_at AT TIME ZONE '+07')::date = $1 
+            ORDER BY 
+                id DESC;
+        `;
+        
         const result = await pool.query(sql, [date]);
         res.json(result.rows || []);
+
     } catch (err) {
         console.error("❌ /api/history_by_date error:", err && err.message ? err.message : err);
         res.status(500).json({ error: 'Lỗi server khi lấy lịch sử' });
     }
 });
-
 // API /upload
 app.post('/upload', upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file' });
