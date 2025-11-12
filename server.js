@@ -448,49 +448,84 @@ app.post('/update', async (req, res) => {
             }
         }
 
-        // 4. Gọi AI NÂNG CAO (CHỈ KHI CHẠY LOCAL)
-        if (!process.env.DATABASE_URL) {
-            try {
-                // TÍNH TOÁN CÁC FEATURES NÂNG CAO CHO AI MỚI
-                const ab_diff = mucNuocB - mucNuocA;
-                const ab_ratio = mucNuocB / (mucNuocA + 0.001); // Tránh chia cho 0
-                const danger_index = (mucNuocB * 0.3) + (Math.abs(b_rate_of_change) * 2.0) + (Math.abs(b_absolute_change) * 0.5) + (ab_diff * 0.2);
-                const b_trend = mucNuocB; // Đơn giản, có thể cải tiến sau
+ 
+        // ==========================================
+        // 4. GỌI AI NÂNG CAO (ĐÃ BỎ CHECK LOCAL - LUÔN LUÔN GỌI)
+        // ==========================================
+        try {
+            // TÍNH TOÁN CÁC FEATURES NGUỒN MÀ AI CẦN
+            const ab_diff = mucNuocB - mucNuocA;
+            
+            // LƯU Ý: Không cần tính ab_ratio, danger_index ở đây.
+            // Python API (model_api.py) sẽ tự tính 2 features đó
+            // để đảm bảo tính nhất quán (tránh Training-Serving Skew).
 
-                const ai_payload = { 
-                    mucNuocA, mucNuocB, luuLuong, 
-                    is_raining_now: isRaining ? 1 : 0, 
-                    b_rate_of_change, 
-                    flow_rate_of_change, 
-                    ab_diff,
-                    ab_ratio,
-                    b_absolute_change,
-                    b_total_rise,
-                    danger_index,
-                    b_trend
-                };
+            // 🎯 Payload CHUẨN (8 features) khớp với model_api.py
+            // Đây là 8 features "nguồn" mà model_api.py dùng hàm .get()
+            // để lấy về, sau đó nó tự tính 2 features còn lại 
+            // (ab_ratio, danger_index) để tạo ra đủ 10 features cho model.
+            const ai_payload = { 
+                mucNuocA, 
+                mucNuocB, 
+                luuLuong, 
+                is_raining_now: isRaining ? 1 : 0, 
+                b_rate_of_change, 
+                flow_rate_of_change, 
+                ab_diff,
+                b_absolute_change
+                // ĐÃ LOẠI BỎ: b_total_rise, b_trend (gây lỗi skew)
+                // ĐÃ LOẠI BỎ: ab_ratio, danger_index (Python tự tính)
+            };
 
-                console.log(`🧠 [AI Enhanced] Gửi 12 features đến AI...`);
-                
-                const [statusRes, timeRes] = await Promise.all([
-                    axios.post(`${PYTHON_SERVER_URL}/predict`, ai_payload, { timeout: 8000 }),
-                    axios.post(`${PYTHON_SERVER_URL}/predict_time`, ai_payload, { timeout: 8000 })
-                ]);
-                
-                duDoanTrangThai = statusRes?.data?.prediction || duDoanTrangThai;
-                duDoanThoiGian = parseFloat(timeRes?.data?.predicted_seconds) || -1;
-                
-                // HIỂN THỊ PHÂN TÍCH NGUY HIỂM CHI TIẾT
-                const dangerAnalysis = statusRes?.data?.danger_analysis;
-                if (dangerAnalysis) {
-                    console.log(`🔍 [AI Analysis] Mực nước: ${dangerAnalysis.mucnuocb_level}, Tốc độ: ${dangerAnalysis.rate_of_change_level}, Thay đổi: ${dangerAnalysis.absolute_change_level}, Chỉ số: ${dangerAnalysis.danger_index.toFixed(1)}`);
-                }
-                
-                console.log(`[🧠 AI Enhanced Status]: ${duDoanTrangThai}, Countdown: ${duDoanThoiGian >= 0 ? duDoanThoiGian.toFixed(2) + 's' : 'N/A'}`);
-            } catch (ai_err) {
-                console.error("❌ Lỗi gọi API dự đoán NÂNG CAO (Python):", ai_err && ai_err.message ? ai_err.message : ai_err);
+            // Cập nhật log cho chính xác
+            console.log(`🧠 [AI API-Safe] Gửi 8 features (nguồn) đến AI...`);
+            
+            const [statusRes, timeRes] = await Promise.all([
+                axios.post(`${PYTHON_SERVER_URL}/predict`, ai_payload, { timeout: 8000 }),
+                axios.post(`${PYTHON_SERVER_URL}/predict_time`, ai_payload, { timeout: 8000 })
+            ]);
+            
+            // Lấy kết quả dự đoán
+            duDoanTrangThai = statusRes?.data?.prediction || duDoanTrangThai;
+            duDoanThoiGian = parseFloat(timeRes?.data?.predicted_seconds) || -1;
+            
+            // HIỂN THỊ PHÂN TÍCH NGUY HIỂM CHI TIẾT
+            const dangerAnalysis = statusRes?.data?.danger_analysis;
+            if (dangerAnalysis) {
+                console.log(`🔍 [AI Analysis] Mực nước: ${dangerAnalysis.mucnuocb_level}, Tốc độ: ${dangerAnalysis.rate_of_change_level}, Thay đổi: ${dangerAnalysis.absolute_change_level}, Chỉ số: ${dangerAnalysis.danger_index.toFixed(1)}`);
+            }
+            
+            console.log(`[🧠 AI API-Safe Status]: ${duDoanTrangThai}, Countdown: ${duDoanThoiGian >= 0 ? duDoanThoiGian.toFixed(2) + 's' : 'N/A'}`);
+        
+        } catch (ai_err) {
+            console.error("❌ Lỗi gọi API dự đoán NÂNG CAO (Python):", ai_err && ai_err.message ? ai_err.message : ai_err);
+            // Vẫn tiếp tục dù AI lỗi, duDoanTrangThai sẽ là "Lỗi dự đoán"
+        }
+
+        // ==========================================
+        // 5. GỬI THÔNG BÁO AI (ĐÃ BỎ CHECK LOCAL - LUÔN LUÔN GỬI)
+        // ==========================================
+        if (shouldSendAIStatusNotification(appState.lastSentAIStatus, duDoanTrangThai)) {
+            await sendAIStatusNotification(duDoanTrangThai, duDoanThoiGian);
+            appState.lastSentAIStatus = duDoanTrangThai;
+            // Reset bộ đếm thời gian cảnh báo nguy hiểm nếu trạng thái về bình thường
+            if (duDoanTrangThai !== "Nguy hiểm!") appState.lastDangerAlertTime = null;
+        }
+        
+        // CẢNH BÁO NGUY HIỂM ĐỊNH KỲ (Lặp lại sau mỗi 2 phút nếu vẫn nguy hiểm)
+        if (duDoanTrangThai === "Nguy hiểm!" && appState.fcmTokens.length > 0) {
+            const now = Date.now();
+            if (!appState.lastDangerAlertTime || (now - appState.lastDangerAlertTime) > 2 * 60 * 1000) { // 2 phút
+                console.log("🔄 Gửi cảnh báo định kỳ NGUY HIỂM");
+                await sendAIStatusNotification(duDoanTrangThai, duDoanThoiGian);
+                appState.lastDangerAlertTime = now;
             }
         }
+
+        // ==========================================
+        // === 7. LƯU DỮ LIỆU VÀO DB (Gửi 2 nơi)
+        // ==========================================
+        // ... (Phần còn lại của hàm giữ nguyên) ...
 
         // 5. Gửi thông báo AI (CHỈ KHI CHẠY LOCAL)
         if (!process.env.DATABASE_URL) {
