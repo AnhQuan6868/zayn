@@ -649,28 +649,23 @@ app.get('/api/chart_data', async (req, res) => {
 });
 
 // History by date
+// ... bên trong file server.js
+
 app.get('/api/history_by_date', async (req, res) => {
     try {
-        const { date } = req.query; // (Lấy ?date=... từ điện thoại)
+        const { date } = req.query;
         if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
             return res.status(400).json({ error: 'Thiếu hoặc sai định dạng tham số ngày (YYYY-MM-DD)' });
         }
         
-        // ❌ LỖI CŨ (Có thể bạn đang dùng):
-        // const sql = `SELECT * FROM sensor_data WHERE created_at::date = $1 ORDER BY id DESC;`;
-        // Lỗi này gây ra "bug nửa đêm" và "bug 23:00"
-
-        // ✅ SỬA LẠI THÀNH CÂU NÀY:
-        // Query này ra lệnh cho CSDL:
-        // 1. Lấy cột created_at (đang là UTC)
-        // 2. Chuyển nó sang múi giờ Việt Nam (+07)
-        // 3. Lấy phần 'ngày' (::date) của giờ Việt Nam
-        // 4. So sánh với ngày mà điện thoại gửi ($1)
+        // ❌ DÒNG CŨ GÂY LỖI (Nếu bạn đã sửa theo tôi):
+        // const sql = `SELECT *, predicted_thoigian_seconds FROM sensor_data ...`;
+        
+        // ✅ DÒNG SỬA LẠI (Quay về SELECT *):
+        // (Và đảm bảo logic AT TIME ZONE '+07' vẫn còn)
         const sql = `
             SELECT 
-                *, 
-                predicted_thoigian_seconds -- Đảm bảo cột này được chọn
-            FROM 
+                * FROM 
                 sensor_data 
             WHERE 
                 (created_at AT TIME ZONE '+07')::date = $1 
@@ -682,6 +677,7 @@ app.get('/api/history_by_date', async (req, res) => {
         res.json(result.rows || []);
 
     } catch (err) {
+        // Lỗi "column ... does not exist" sẽ xuất hiện ở đây
         console.error("❌ /api/history_by_date error:", err && err.message ? err.message : err);
         res.status(500).json({ error: 'Lỗi server khi lấy lịch sử' });
     }
