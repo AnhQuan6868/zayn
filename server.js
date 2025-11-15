@@ -651,34 +651,30 @@ app.get('/api/chart_data', async (req, res) => {
 // History by date
 // ... bên trong file server.js
 
+// [SỬA LẠI TRONG server.js]
+
 app.get('/api/history_by_date', async (req, res) => {
+    const { date } = req.query; // Ví dụ: "2025-11-15"
+    
+    if (!date) {
+        return res.status(400).json({ error: 'Thiếu tham số ngày (date)' });
+    }
+
     try {
-        const { date } = req.query;
-        if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-            return res.status(400).json({ error: 'Thiếu hoặc sai định dạng tham số ngày (YYYY-MM-DD)' });
-        }
-        
-        // ❌ DÒNG CŨ GÂY LỖI (Nếu bạn đã sửa theo tôi):
-        // const sql = `SELECT *, predicted_thoigian_seconds FROM sensor_data ...`;
-        
-        // ✅ DÒNG SỬA LẠI (Quay về SELECT *):
-        // (Và đảm bảo logic AT TIME ZONE '+07' vẫn còn)
+        // ✅ SỬA Ở ĐÂY:
+        // Yêu cầu PostgreSQL chuyển đổi 'timestamp' (vốn là UTC)
+        // sang múi giờ 'Asia/Ho_Chi_Minh' (GMT+7) TRƯỚC KHI lấy DATE().
         const sql = `
-            SELECT 
-                * FROM 
-                sensor_data 
-            WHERE 
-                (created_at AT TIME ZONE '+07')::date = $1 
-            ORDER BY 
-                id DESC;
+            SELECT * FROM sensor_data 
+            WHERE DATE(timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh') = $1 
+            ORDER BY timestamp ASC
         `;
         
         const result = await pool.query(sql, [date]);
         res.json(result.rows || []);
 
     } catch (err) {
-        // Lỗi "column ... does not exist" sẽ xuất hiện ở đây
-        console.error("❌ /api/history_by_date error:", err && err.message ? err.message : err);
+        console.error("❌ /api/history_by_date error:", err.message);
         res.status(500).json({ error: 'Lỗi server khi lấy lịch sử' });
     }
 });
