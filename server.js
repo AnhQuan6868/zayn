@@ -653,6 +653,8 @@ app.get('/api/chart_data', async (req, res) => {
 
 // [SỬA LẠI TRONG server.js]
 
+// [SỬA LẠI TRONG server.js]
+
 app.get('/api/history_by_date', async (req, res) => {
     const { date } = req.query; // Ví dụ: "2025-11-15"
     
@@ -662,12 +664,11 @@ app.get('/api/history_by_date', async (req, res) => {
 
     try {
         // ✅ SỬA Ở ĐÂY:
-        // Yêu cầu PostgreSQL chuyển đổi 'timestamp' (vốn là UTC)
-        // sang múi giờ 'Asia/Ho_Chi_Minh' (GMT+7) TRƯỚC KHI lấy DATE().
+        // Đổi "timestamp" thành "created_at" (đúng với CSDL của bạn)
         const sql = `
             SELECT * FROM sensor_data 
-            WHERE DATE(timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh') = $1 
-            ORDER BY timestamp ASC
+            WHERE DATE(created_at AT TIME ZONE 'Asia/Ho_Chi_Minh') = $1 
+            ORDER BY created_at ASC
         `;
         
         const result = await pool.query(sql, [date]);
